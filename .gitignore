@@ -3,3 +3,4 @@
 *node_modules*
 *package-lock.json*
 *bin
+!backend/resources/sample_serialized_tilist.bin
