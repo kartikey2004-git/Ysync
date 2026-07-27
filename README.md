@@ -1,10 +1,10 @@
-# Local-first realtime collaborative rich-text editor
+# YSync
 
-![text editor demo](https://raw.githubusercontent.com/priyangshupal/documentation-images/main/collaborative-text-editor/collaborative-text-editor-demo.gif)
+A local-first, realtime collaborative rich-text editor built with Conflict-free Replicated Data Types (CRDTs) and WebRTC.
 
-A realtime collaborative rich-text editor using Conflict-free Replicated Data Types (CRDTs) and Google's WebRTC framework. With this editor, several users can edit documents together in realtime with automatic conflict-merge and user-intent preservation. The implementation of the CRDT is using a variant of the RGA (Replicated Growable Arrays) protocol. The RGA protocol is implemented as Timestamped Insertion List (TI List) and guarantees "Eventual Consistency".
+Multiple users can edit the same document at once, with automatic conflict resolution and user-intent preservation — no central server holding the source of truth. The CRDT is a variant of the RGA (Replicated Growable Array) protocol, implemented as a Timestamped Insertion (TI) List that guarantees eventual consistency across all replicas.
 
-For more details about the CRDT implementation, see the [documentation](./docs/README.md)
+For details on the CRDT implementation, see the [documentation](./docs/README.md).
 
 ## Key features
 
@@ -12,17 +12,18 @@ For more details about the CRDT implementation, see the [documentation](./docs/R
 - [Local-first](https://martin.kleppmann.com/papers/local-first.pdf) software implementation.
 - Automatic merge conflict resolution using [CRDTs](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type).
 - User-intent preservation, drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/static/cscw-publication.pdf).
-- Peer to peer architecture using WebRTC.
+- Peer-to-peer architecture using WebRTC.
 
 ## Architecture
 
-![architecture diagram](https://raw.githubusercontent.com/priyangshupal/documentation-images/main/collaborative-text-editor/architecture.svg)
+- **backend/** — a file store server that persists each replica's serialized CRDT to disk, and a signaling server that brokers WebRTC peer connections between editors.
+- **frontend/** — a React app embedding a Quill rich-text editor; local edits update the TI List, save to local storage, and propagate to peers over an `RTCDataChannel`.
 
 ## Getting started
 
 ### Prerequisites
 
-It is recommended to have `node` and `npm` installed. This project was built using node version `20.11.1` and npm version `10.5.1`.
+`node` and `npm` are required. Built and tested with node `20.11.1` and npm `10.5.1`.
 
 ### Installing dependencies
 
@@ -30,36 +31,28 @@ Install the backend and frontend dependencies by running `npm install` inside th
 
 ### Running test cases
 
-Run the following command to check the code against all the available test cases
-
 ```
 npm run --prefix backend test
 ```
 
 ## Usage
 
-The project can be run in three steps by running the below commands in the root directory:
-
-- Run the backend file store server. This server interacts with the local store/filesystem for storing the CRDT. It also supports retrieval from the store.
+Run the following in three separate terminals from the project root:
 
 ```
 npm run --prefix backend fileserver
 ```
 
-- In a separate terminal, run the signaling server for WebRTC
-
 ```
 npm run --prefix backend sigserver
 ```
-
-- In a separate terminal, start the frontend app
 
 ```
 npm run --prefix frontend start
 ```
 
-Now, open two browser tabs to the address [localhost:3000](http://localhost:3000/). These editors are now connected via a peer-to-peer network through WebRTC and can exchange local editor operations using WebRTC's data channel.
+Then open two browser tabs at [localhost:3000](http://localhost:3000/). The two editors connect peer-to-peer via WebRTC and exchange local editor operations over the data channel.
 
-## License
+## Author
 
-Usage is provided under the [MIT License](https://opensource.org/license/mit). See [LICENSE](./LICENSE) for the full details.
+[Kartikey Bhatnagar](https://github.com/kartikey2004-git)

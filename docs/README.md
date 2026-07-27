@@ -1,4 +1,6 @@
-# Documentation
+# YSync Documentation
+
+This document covers the CRDT design behind YSync's collaborative editing engine.
 
 ## The RGA Protocol
 
