@@ -9,7 +9,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "benchmark:storage": "tsx scripts/storageGrowthBenchmark.ts"
+    "benchmark:storage": "tsx scripts/storageGrowthBenchmark.ts",
+    "benchmark:latency": "tsx scripts/loadTest.ts"
   },
   "dependencies": {
     "@ysync/database": "0.1.0",

@@ -1,57 +1,110 @@
 # YSync
 
-A local-first, realtime collaborative rich-text editor built with Conflict-free Replicated Data Types (CRDTs) and WebRTC.
+A real-time collaborative text editor built on a custom sequence CRDT —
+concurrent edits from any number of replicas converge without a central
+lock, work fully offline, and reconcile with zero data loss on reconnect.
 
-Multiple users can edit the same document at once, with automatic conflict resolution and user-intent preservation — no central server holding the source of truth. The CRDT is a variant of the RGA (Replicated Growable Array) protocol, implemented as a Timestamped Insertion (TI) List that guarantees eventual consistency across all replicas.
-
-For details on the CRDT implementation, see the [documentation](./docs/README.md).
+The CRDT is an RGA (Replicated Growable Array) variant, implemented as a
+Timestamped Insertion (TI) List. For the algorithm itself, see
+[docs/README.md](./docs/README.md); for the system it runs inside (the
+WebSocket sync server, Postgres persistence, Redis fan-out, the Next.js
+client), see [system-design.md](./system-design.md). The implementation
+history is in [plan.md](./plan.md) and `docs/changes/` — one file per
+phase, including bugs found and real benchmark numbers recorded along
+the way.
 
 ## Key features
 
-- Real-time collaborative editing.
-- [Local-first](https://martin.kleppmann.com/papers/local-first.pdf) software implementation.
-- Automatic merge conflict resolution using [CRDTs](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type).
-- User-intent preservation, drawing inspiration from [Peritext](https://www.inkandswitch.com/peritext/static/cscw-publication.pdf).
-- Peer-to-peer architecture using WebRTC.
+- **Custom sequence CRDT** ([`packages/crdt`](./packages/crdt)) — an RGA
+  implementation anchored by recorded origin ids (not live list
+  positions), verified by property-based tests simulating thousands of
+  out-of-order concurrent operations.
+- **WebSocket sync server** ([`apps/server`](./apps/server)) — per-document
+  awareness/presence (cursors, selections), fanning ops out to every
+  connected client, horizontally scalable via Redis pub/sub across
+  processes.
+- **Offline-first sync** — local edits queue in IndexedDB and reconcile
+  via CRDT causal ordering on reconnect (incremental `sync` when
+  possible, a full snapshot fallback otherwise), validated by a scenario
+  test driving concurrent offline edits across simulated clients.
+- **Durable persistence** ([`packages/database`](./packages/database)) —
+  the CRDT op log is persisted to Postgres with periodic snapshots and
+  tombstone compaction, bounding the operation table's row count
+  independent of total edit-history length.
 
 ## Architecture
 
-- **backend/** — a file store server that persists each replica's serialized CRDT to disk, and a signaling server that brokers WebRTC peer connections between editors.
-- **frontend/** — a React app embedding a Quill rich-text editor; local edits update the TI List, save to local storage, and propagate to peers over an `RTCDataChannel`.
+```
+apps/
+  server/     WebSocket sync server (Express + ws, Redis, Prisma)
+  web/        Next.js editor client (Quill, IndexedDB)
+packages/
+  crdt/       the sequence CRDT itself — no I/O, isomorphic
+  protocol/   zod-validated WS message schemas shared by server + client
+  database/   Prisma schema/client (Postgres)
+```
+
+npm workspaces monorepo; see [system-design.md](./system-design.md) for
+the full design (data model, wire protocol, persistence pipeline,
+scaling model, testing strategy).
 
 ## Getting started
 
 ### Prerequisites
 
-`node` and `npm` are required. Built and tested with node `20.11.1` and npm `10.5.1`.
+Node 20+, npm, and Docker (for local Postgres + Redis).
 
-### Installing dependencies
+### Setup
 
-Install the backend and frontend dependencies by running `npm install` inside the `backend` and `frontend` folders respectively.
+```bash
+npm install
 
-### Running test cases
+# Postgres + Redis (docker-compose.yml)
+docker compose up -d
 
-```
-npm run --prefix backend test
-```
-
-## Usage
-
-Run the following in three separate terminals from the project root:
-
-```
-npm run --prefix backend fileserver
+# apply the schema
+cp .env.example .env
+npm run db:migrate
 ```
 
-```
-npm run --prefix backend sigserver
+### Running the app
+
+In two separate terminals, with the env vars from `.env.example`
+exported (or passed inline):
+
+```bash
+npm run dev --workspace=apps/server
 ```
 
-```
-npm run --prefix frontend start
+```bash
+npm run dev --workspace=apps/web
 ```
 
-Then open two browser tabs at [localhost:3000](http://localhost:3000/). The two editors connect peer-to-peer via WebRTC and exchange local editor operations over the data channel.
+Open two browser tabs at the same `/doc/<slug>` on
+[localhost:3000](http://localhost:3000/) — edits and presence sync live.
+A "simulate offline" toggle in the editor lets you exercise the offline
+reconnect path without actually disconnecting your network.
+
+### Testing
+
+```bash
+npm test
+```
+
+Runs every workspace's test suite. Integration tests that need a real
+Redis/Postgres (`*.integration.test.ts`) skip gracefully — not fail — if
+`REDIS_URL`/`DATABASE_URL` aren't reachable, so `npm test` works without
+Docker running; bring the compose stack up first to run the full set.
+
+### Benchmarks
+
+Not part of `npm test` — reports, not pass/fail gates (a regression from
+the recorded baseline is a signal to investigate, not a CI failure):
+
+```bash
+npm run benchmark:storage -w apps/server   # op-log growth bound (docs/changes/phase-4-persistence.md)
+npm run benchmark:latency -w apps/server   # WS fan-out propagation latency (docs/changes/phase-7-load-latency.md)
+```
 
 ## Author
 

@@ -3,7 +3,6 @@
 *node_modules*
 *package-lock.json*
 *bin
-!backend/resources/sample_serialized_tilist.bin
 system-design.md
 plan.md
 dist
@@ -11,3 +10,5 @@ dist
 generated
 .env
 .env.*
+!.env.example
+docs/changes/*
