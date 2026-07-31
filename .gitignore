@@ -4,3 +4,7 @@
 *package-lock.json*
 *bin
 !backend/resources/sample_serialized_tilist.bin
+system-design.md
+plan.md
+dist
+*.tsbuildinfo
