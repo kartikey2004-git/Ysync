@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { Op, OpId } from "@ysync/crdt";
+import type { Op } from "@ysync/crdt";
 import type { PresenceEntry } from "./presence/PresenceStore.js";
 import type { PresenceStore } from "./presence/PresenceStore.js";
 import type { PubSubBus } from "./pubsub/PubSubBus.js";
 import type { SeqAllocator } from "./seq/SeqAllocator.js";
+import type { PersistenceStore } from "./persistence/PersistenceStore.js";
 import { Room } from "./room.js";
+import { opIdOf } from "./util/opId.js";
 import type { WebSocket } from "ws";
 
 interface RoomEntry {
@@ -27,16 +29,15 @@ export interface RoomManagerOptions {
   pubSubBus: PubSubBus;
   presenceStore: PresenceStore;
   seqAllocator: SeqAllocator;
+  persistenceStore: PersistenceStore;
   /** How long a presence entry stays valid without a refresh (system-design.md §6.5). */
   presenceTtlMs?: number;
-  /** How often a room's presence sweep / idle-eviction check runs. */
+  /** How often a room's presence sweep / idle-eviction / snapshot check runs. */
   sweepIntervalMs?: number;
   /** How long a room may sit empty before its in-memory state is evicted. */
   idleTimeoutMs?: number;
-}
-
-function opIdOf(op: Op): OpId {
-  return op.type === "insert" ? op.id : op.targetId;
+  /** Ops-since-last-snapshot threshold that triggers a snapshot + GC (system-design.md §6.4). */
+  snapshotOpThreshold?: number;
 }
 
 function docChannel(docId: string): string {
@@ -49,10 +50,12 @@ function presenceChannel(docId: string): string {
 
 /**
  * Owns every active `Room` on this process and mediates all cross-process
- * fan-out (system-design.md §6.2/§6.5). Each published message carries this
- * process's `processId` so its own subscription can ignore it — local
- * broadcast already happened synchronously and directly; the pub/sub round
- * trip is only for *other* processes. See docs/changes/phase-3-server-core.md.
+ * fan-out (system-design.md §6.2/§6.5) and persistence (§6.3/§6.4/§7). Each
+ * published message carries this process's `processId` so its own
+ * subscription can ignore it — local broadcast already happened
+ * synchronously and directly; the pub/sub round trip is only for *other*
+ * processes. See docs/changes/phase-3-server-core.md and
+ * docs/changes/phase-4-persistence.md.
  */
 export class RoomManager {
   private readonly rooms = new Map<string, RoomEntry>();
@@ -60,24 +63,29 @@ export class RoomManager {
   private readonly pubSubBus: PubSubBus;
   private readonly presenceStore: PresenceStore;
   private readonly seqAllocator: SeqAllocator;
+  private readonly persistenceStore: PersistenceStore;
   private readonly presenceTtlMs: number;
   private readonly sweepIntervalMs: number;
   private readonly idleTimeoutMs: number;
+  private readonly snapshotOpThreshold: number;
 
   constructor(options: RoomManagerOptions) {
     this.pubSubBus = options.pubSubBus;
     this.presenceStore = options.presenceStore;
     this.seqAllocator = options.seqAllocator;
+    this.persistenceStore = options.persistenceStore;
     this.presenceTtlMs = options.presenceTtlMs ?? 30_000;
     this.sweepIntervalMs = options.sweepIntervalMs ?? 10_000;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 5 * 60_000;
+    this.snapshotOpThreshold = options.snapshotOpThreshold ?? 50;
   }
 
   async getOrCreateRoom(docId: string): Promise<Room> {
     const existing = this.rooms.get(docId);
     if (existing) return existing.room;
 
-    const room = new Room(docId);
+    const { snapshot, ops, latestSeq } = await this.persistenceStore.load(docId);
+    const room = Room.hydrate(docId, snapshot, ops, latestSeq);
     const entry: RoomEntry = {
       room,
       emptySince: null,
@@ -117,11 +125,22 @@ export class RoomManager {
     const seq = await this.seqAllocator.next(docId);
     room.applyOps(ops, seq);
 
-    room.sendTo(senderReplicaId, { type: "ack", docId, seq, opIds: ops.map(opIdOf) });
+    // fan-out first (system-design.md §6.2/§6.3) — durability below must not
+    // sit on the latency-critical broadcast path.
     room.broadcast({ type: "broadcast-op", docId, seq, ops }, senderReplicaId);
+    const fanoutPayload: OpFanoutPayload = { originId: this.processId, seq, ops };
+    await this.pubSubBus.publish(docChannel(docId), JSON.stringify(fanoutPayload));
 
-    const payload: OpFanoutPayload = { originId: this.processId, seq, ops };
-    await this.pubSubBus.publish(docChannel(docId), JSON.stringify(payload));
+    try {
+      await this.persistenceStore.appendOps(docId, seq, ops);
+      room.sendTo(senderReplicaId, { type: "ack", docId, seq, opIds: ops.map(opIdOf) });
+    } catch {
+      room.sendTo(senderReplicaId, {
+        type: "error",
+        code: "PERSIST_FAILED",
+        message: "your edit was applied and shared, but could not be durably saved — it will be retried on reconnect",
+      });
+    }
   }
 
   async updatePresence(docId: string, senderReplicaId: string, awareness: Omit<PresenceEntry, "replicaId">): Promise<void> {
@@ -162,6 +181,16 @@ export class RoomManager {
     if (!entry) return; // no local room => no local sockets to notify
     entry.room.applyOps(payload.ops, payload.seq);
     entry.room.broadcast({ type: "broadcast-op", docId, seq: payload.seq, ops: payload.ops });
+
+    // Best-effort: a process that only saw this op via fan-out still tries
+    // to persist it. Safe to be redundant with the originating process's
+    // own appendOps — (docId, opId) is a unique constraint (see
+    // docs/changes/phase-4-persistence.md).
+    try {
+      await this.persistenceStore.appendOps(docId, payload.seq, payload.ops);
+    } catch {
+      // the originating process is primarily responsible for durability; ignore here
+    }
   }
 
   private async handleRemotePresence(docId: string, raw: string): Promise<void> {
@@ -177,6 +206,17 @@ export class RoomManager {
     }
   }
 
+  private async snapshotRoom(docId: string): Promise<void> {
+    const entry = this.rooms.get(docId);
+    if (!entry) return;
+    const { room } = entry;
+
+    room.compactTombstones();
+    const state = room.snapshot();
+    await this.persistenceStore.writeSnapshot(docId, room.currentSeq(), state);
+    room.resetOpsSinceSnapshot();
+  }
+
   private async tick(docId: string): Promise<void> {
     const entry = this.rooms.get(docId);
     if (!entry) return;
@@ -186,6 +226,10 @@ export class RoomManager {
       entry.room.broadcast({ type: "presence-leave", docId, replicaId });
       const payload: PresenceFanoutPayload = { originId: this.processId, kind: "leave", replicaId };
       await this.pubSubBus.publish(presenceChannel(docId), JSON.stringify(payload));
+    }
+
+    if (entry.room.getOpsSinceSnapshot() >= this.snapshotOpThreshold) {
+      await this.snapshotRoom(docId);
     }
 
     if (entry.room.isEmpty()) {

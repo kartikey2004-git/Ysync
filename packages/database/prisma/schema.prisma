@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Document.id is the client-facing docId used throughout apps/server
+// (Redis channel names, Room, RoomManager) — not a separate generated id.
+model Document {
+  id        String   @id
+  latestSeq Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One row per Op. Several rows can share the same `seq` — seq is assigned
+// per client-submitted batch (RoomManager.applyClientOp), not per op.
+model Operation {
+  id        BigInt   @id @default(autoincrement())
+  docId     String
+  seq       Int
+  opId      String
+  type      String
+  originId  String?
+  value     String?
+  attrs     Json?
+  createdAt DateTime @default(now())
+
+  @@unique([docId, opId])
+  @@index([docId, seq])
+}
+
+model Snapshot {
+  id        String   @id @default(cuid())
+  docId     String
+  atSeq     Int
+  state     Json
+  createdAt DateTime @default(now())
+
+  @@index([docId, atSeq])
+}

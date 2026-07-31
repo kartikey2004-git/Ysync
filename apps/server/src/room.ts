@@ -4,20 +4,30 @@ import type { WebSocket } from "ws";
 
 /**
  * Per-document in-memory state (system-design.md §6.1): the live `Rga` and
- * the sockets currently subscribed to it. Phase 3 has no persistence, so a
- * `Room` only ever reflects ops applied since it was created — that's
- * corrected in Phase 4 (cold rooms load from a Postgres snapshot instead of
- * starting empty).
+ * the sockets currently subscribed to it. A cold room is hydrated from its
+ * latest persisted snapshot + trailing ops via `Room.hydrate` rather than
+ * always starting empty (system-design.md §6.4/§7).
  */
 export class Room {
   readonly docId: string;
   private readonly rga: Rga;
   private readonly sockets = new Map<string, WebSocket>();
   private seq = 0;
+  private opsSinceSnapshot = 0;
 
-  constructor(docId: string) {
+  constructor(docId: string, initialRga?: Rga) {
     this.docId = docId;
-    this.rga = new Rga(`server:${docId}`);
+    this.rga = initialRga ?? new Rga(`server:${docId}`);
+  }
+
+  /** Rebuilds a room from a persisted snapshot (if any) plus the ops recorded after it. */
+  static hydrate(docId: string, snapshot: RgaSnapshotNode[], trailingOps: Op[], latestSeq: number): Room {
+    const rga = snapshot.length > 0 ? Rga.fromSnapshot(snapshot, `server:${docId}`) : new Rga(`server:${docId}`);
+    const room = new Room(docId, rga);
+    rga.applyAll(trailingOps);
+    room.seq = latestSeq;
+    room.opsSinceSnapshot = trailingOps.length;
+    return room;
   }
 
   join(replicaId: string, socket: WebSocket): void {
@@ -52,6 +62,20 @@ export class Room {
   applyOps(ops: Op[], seq: number): void {
     this.rga.applyAll(ops);
     this.seq = seq;
+    this.opsSinceSnapshot += ops.length;
+  }
+
+  getOpsSinceSnapshot(): number {
+    return this.opsSinceSnapshot;
+  }
+
+  resetOpsSinceSnapshot(): void {
+    this.opsSinceSnapshot = 0;
+  }
+
+  /** Clears payload from tombstoned nodes (system-design.md §4.5) — call right before writing a snapshot. */
+  compactTombstones(): void {
+    this.rga.compactTombstones();
   }
 
   sendTo(replicaId: string, message: ServerMessage): void {

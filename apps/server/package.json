@@ -8,9 +8,11 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:storage": "tsx scripts/storageGrowthBenchmark.ts"
   },
   "dependencies": {
+    "@ysync/database": "0.1.0",
     "@ysync/crdt": "0.1.0",
     "@ysync/protocol": "0.1.0",
     "express": "^4.19.2",

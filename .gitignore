@@ -8,3 +8,6 @@ system-design.md
 plan.md
 dist
 *.tsbuildinfo
+generated
+.env
+.env.*

@@ -4,6 +4,7 @@ import { RoomManager } from "../src/roomManager.js";
 import { InMemoryBroker, InMemoryPubSubBus } from "../src/pubsub/InMemoryPubSubBus.js";
 import { InMemoryPresenceStore } from "../src/presence/InMemoryPresenceStore.js";
 import { InMemorySeqAllocator, InMemorySeqCounter } from "../src/seq/InMemorySeqAllocator.js";
+import { InMemoryPersistenceStore } from "../src/persistence/InMemoryPersistenceStore.js";
 
 function fakeSocket() {
   const sent: string[] = [];
@@ -32,11 +33,13 @@ function createTestManagers() {
   const broker = new InMemoryBroker();
   const presenceStore = new InMemoryPresenceStore();
   const seqCounter = new InMemorySeqCounter();
+  const persistenceStore = new InMemoryPersistenceStore();
 
   const managerA = new RoomManager({
     pubSubBus: new InMemoryPubSubBus(broker),
     presenceStore,
     seqAllocator: new InMemorySeqAllocator(seqCounter),
+    persistenceStore,
     sweepIntervalMs: 60_000,
     idleTimeoutMs: 60_000,
   });
@@ -44,6 +47,7 @@ function createTestManagers() {
     pubSubBus: new InMemoryPubSubBus(broker),
     presenceStore,
     seqAllocator: new InMemorySeqAllocator(seqCounter),
+    persistenceStore,
     sweepIntervalMs: 60_000,
     idleTimeoutMs: 60_000,
   });
