@@ -19,6 +19,7 @@ export function DocEditor({ slug }: DocEditorProps) {
   return (
     <main className="doc-page">
       <header className="doc-header">
+        <span className="eyebrow">Document</span>
         <h1>{slug}</h1>
         <div className="doc-header-controls">
           <PresenceList snapshot={snapshot} />

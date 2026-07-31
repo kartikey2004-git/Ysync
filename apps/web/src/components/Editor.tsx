@@ -13,9 +13,12 @@ interface EditorProps {
 
 /**
  * Quill <-> CRDT binding (system-design.md §8.4). Local user edits go
- * straight through `deltaToEdits` into `client.insertText`/`deleteText` —
- * Quill has already applied the user's own edit to its own document, so
- * nothing gets written back to Quill for that path. Remote/reconciled
+ * straight through `deltaToEdits` into `client.applyLocalEdits`, applied
+ * and notified as one batch — Quill has already applied the user's own
+ * edit to its own document, so nothing gets written back to Quill for that
+ * path, and notifying mid-batch would let the remote-sync path below race
+ * a half-applied edit (see docs/changes/fix-reentrant-notify-editor-desync.md).
+ * Remote/reconciled
  * state changes are applied via a Delta diff (`quill.updateContents`)
  * rather than a full `setContents` replace, so the local cursor isn't
  * clobbered by someone else's edit.
@@ -36,10 +39,7 @@ export function Editor({ client }: EditorProps) {
 
     const handleTextChange = (delta: QuillDelta, _oldDelta: unknown, source: string) => {
       if (source !== "user") return;
-      for (const edit of deltaToEdits(delta)) {
-        if (edit.kind === "insert") client.insertText(edit.index, edit.value);
-        else client.deleteText(edit.index);
-      }
+      client.applyLocalEdits(deltaToEdits(delta));
     };
     quill.on("text-change", handleTextChange);
 
