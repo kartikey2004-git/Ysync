@@ -1,6 +1,6 @@
 # YSync
 
-A real-time collaborative text editor built on a custom sequence CRDT —
+A real-time collaborative text editor built on a custom sequence CRDT -
 concurrent edits from any number of replicas converge without a central
 lock, work fully offline, and reconcile with zero data loss on reconnect.
 
@@ -8,10 +8,7 @@ The CRDT is an RGA (Replicated Growable Array) variant, implemented as a
 Timestamped Insertion (TI) List. For the algorithm itself, see
 [docs/README.md](./docs/README.md); for the system it runs inside (the
 WebSocket sync server, Postgres persistence, Redis fan-out, the Next.js
-client), see [system-design.md](./system-design.md). The implementation
-history is in [plan.md](./plan.md) and `docs/changes/` — one file per
-phase, including bugs found and real benchmark numbers recorded along
-the way.
+client). 
 
 ## Key features
 
@@ -44,9 +41,6 @@ packages/
   database/   Prisma schema/client (Postgres)
 ```
 
-npm workspaces monorepo; see [system-design.md](./system-design.md) for
-the full design (data model, wire protocol, persistence pipeline,
-scaling model, testing strategy).
 
 ## Getting started
 
