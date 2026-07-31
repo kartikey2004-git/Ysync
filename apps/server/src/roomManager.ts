@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { Op } from "@ysync/crdt";
+import { opIdOf, type Op } from "@ysync/crdt";
 import type { PresenceEntry } from "./presence/PresenceStore.js";
 import type { PresenceStore } from "./presence/PresenceStore.js";
 import type { PubSubBus } from "./pubsub/PubSubBus.js";
 import type { SeqAllocator } from "./seq/SeqAllocator.js";
 import type { PersistenceStore } from "./persistence/PersistenceStore.js";
 import { Room } from "./room.js";
-import { opIdOf } from "./util/opId.js";
 import type { WebSocket } from "ws";
 
 interface RoomEntry {
