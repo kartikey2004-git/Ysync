@@ -50,20 +50,20 @@ function send(socket: WebSocket, message: unknown): void {
   socket.send(JSON.stringify(message));
 }
 
-async function joinAndAwaitSnapshot(socket: WebSocket, docId: string, replicaId: string): Promise<ServerMessage> {
+async function joinAndAwaitCatchUp(socket: WebSocket, docId: string, replicaId: string): Promise<ServerMessage> {
   const snapshotPromise = nextMessage(socket);
   send(socket, { type: "join", docId, replicaId, sinceSeq: 0 });
   return snapshotPromise;
 }
 
 describe("WS integration (single instance, real sockets)", () => {
-  test("join returns the current (empty) snapshot", async () => {
+  test("join on a brand-new room returns an empty incremental sync (no history to fall back on)", async () => {
     const { url } = await startServer();
     const alice = await connect(url);
 
-    const snapshot = await joinAndAwaitSnapshot(alice, "doc-1", "alice");
+    const reply = await joinAndAwaitCatchUp(alice, "doc-1", "alice");
 
-    expect(snapshot).toEqual({ type: "snapshot", docId: "doc-1", seq: 0, state: [] });
+    expect(reply).toEqual({ type: "sync", docId: "doc-1", seq: 0, ops: [] });
     alice.close();
   });
 
@@ -72,8 +72,8 @@ describe("WS integration (single instance, real sockets)", () => {
     const alice = await connect(url);
     const bob = await connect(url);
 
-    await joinAndAwaitSnapshot(alice, "doc-1", "alice");
-    await joinAndAwaitSnapshot(bob, "doc-1", "bob");
+    await joinAndAwaitCatchUp(alice, "doc-1", "alice");
+    await joinAndAwaitCatchUp(bob, "doc-1", "bob");
 
     const ackPromise = nextMessage(alice);
     const broadcastPromise = nextMessage(bob);
@@ -96,8 +96,8 @@ describe("WS integration (single instance, real sockets)", () => {
     const alice = await connect(url);
     const bob = await connect(url);
 
-    await joinAndAwaitSnapshot(alice, "doc-1", "alice");
-    await joinAndAwaitSnapshot(bob, "doc-1", "bob");
+    await joinAndAwaitCatchUp(alice, "doc-1", "alice");
+    await joinAndAwaitCatchUp(bob, "doc-1", "bob");
 
     const presenceUpdatePromise = nextMessage(bob);
     send(alice, { type: "presence", docId: "doc-1", cursor: 2, name: "Alice" });

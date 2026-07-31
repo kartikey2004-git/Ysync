@@ -28,6 +28,7 @@ export interface DocumentClientSnapshot {
   name: string;
   color: string;
   lastError: string | null;
+  simulatedOffline: boolean;
 }
 
 const HEARTBEAT_INTERVAL_MS = 8_000;
@@ -41,6 +42,7 @@ const EMPTY_SNAPSHOT: DocumentClientSnapshot = {
   name: "",
   color: "",
   lastError: null,
+  simulatedOffline: false,
 };
 
 /**
@@ -49,12 +51,12 @@ const EMPTY_SNAPSHOT: DocumentClientSnapshot = {
  * document (system-design.md §8.1). Framework-agnostic — `useDocument`
  * wraps it for React via `subscribe`/`getSnapshot`.
  *
- * Reconnect model (see docs/changes/phase-5-web-editor.md): the server
- * only ever replies to `join` with a full `snapshot`, so on every
- * connect/reconnect this rebuilds the Rga from that snapshot and reapplies
- * its own not-yet-acked outbox ops on top (Rga.apply is idempotent), then
- * re-sends the outbox — correct whether this is the first connection or a
- * reconnect after a drop.
+ * Reconnect model (system-design.md §8.3): `join` carries `sinceSeq`, and
+ * the server replies with either an incremental `sync` (just the missing
+ * ops) or a full `snapshot` fallback. Either way, this client reconciles
+ * its local state and then flushes any not-yet-acked outbox ops as a
+ * fresh `op` message — correct whether this is the first connection or a
+ * reconnect after a drop, real or simulated (`setSimulatedOffline`).
  */
 export class DocumentClient {
   readonly docId: string;
@@ -76,6 +78,7 @@ export class DocumentClient {
   private lastCursor: number | null = null;
   private lastSelection: { anchor: number; head: number } | null = null;
   private closedByUser = false;
+  private simulatedOffline = false;
   private cachedSnapshot: DocumentClientSnapshot = EMPTY_SNAPSHOT;
 
   constructor(docId: string, wsUrl: string) {
@@ -110,7 +113,7 @@ export class DocumentClient {
   }
 
   private connect(): void {
-    if (this.closedByUser) return;
+    if (this.closedByUser || this.simulatedOffline) return;
     this.connectionState = "connecting";
     this.notify();
 
@@ -133,7 +136,7 @@ export class DocumentClient {
       this.connectionState = "closed";
       this.stopHeartbeat();
       this.notify();
-      if (!this.closedByUser) this.scheduleReconnect();
+      if (!this.closedByUser && !this.simulatedOffline) this.scheduleReconnect();
     });
   }
 
@@ -178,24 +181,28 @@ export class DocumentClient {
 
     switch (message.type) {
       case "snapshot": {
+        // rebuild from scratch — our own outbox ops aren't in the server's
+        // state (that's why they're still outbox entries), so reintegrate
+        // them on top before flushing.
         this.rga = message.state.length > 0 ? Rga.fromSnapshot(message.state, this.replicaId) : new Rga(this.replicaId);
-        this.lastAckedSeq = message.seq;
-        const pendingOps: Op[] = [];
         for (const record of this.outbox.values()) {
           this.rga.apply(record.op);
-          pendingOps.push(record.op);
         }
+        this.lastAckedSeq = message.seq;
         void this.persistDocumentState();
-        if (pendingOps.length > 0) {
-          this.send({ type: "op", docId: this.docId, ops: pendingOps });
-        }
+        this.flushOutbox();
         this.notify();
         break;
       }
       case "sync": {
+        // incremental catch-up — our own outbox ops are already part of
+        // the local rga (applied optimistically when created), so just
+        // integrate what we were missing and flush the outbox in case the
+        // server never actually received it (e.g. dropped before an ack).
         this.rga.applyAll(message.ops);
         this.lastAckedSeq = message.seq;
         void this.persistDocumentState();
+        this.flushOutbox();
         this.notify();
         break;
       }
@@ -269,6 +276,40 @@ export class DocumentClient {
     this.notify();
   }
 
+  /** Re-sends every not-yet-acked local op as one `op` message — safe to call redundantly (server-side idempotent on opId). */
+  private flushOutbox(): void {
+    if (this.outbox.size === 0) return;
+    const ops = [...this.outbox.values()].map((record) => record.op);
+    this.send({ type: "op", docId: this.docId, ops });
+  }
+
+  /**
+   * Manual offline simulation (plan.md Phase 6): closes the live
+   * connection and skips reconnect while `true` — local edits keep
+   * applying and queuing in the outbox exactly as during a real network
+   * drop. Reconnecting on `false` drives the same join -> catch-up ->
+   * outbox-flush path a real reconnect does.
+   */
+  setSimulatedOffline(offline: boolean): void {
+    if (this.simulatedOffline === offline) return;
+    this.simulatedOffline = offline;
+
+    if (offline) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.stopHeartbeat();
+      this.ws?.close();
+      this.ws = null;
+      this.connectionState = "closed";
+      this.notify();
+    } else {
+      this.reconnectAttempt = 0;
+      this.connect();
+    }
+  }
+
   updatePresence(cursor: number | null, selection: { anchor: number; head: number } | null): void {
     this.lastCursor = cursor;
     this.lastSelection = selection;
@@ -306,6 +347,7 @@ export class DocumentClient {
       replicaId: this.replicaId,
       name: this.name,
       color: this.color,
+      simulatedOffline: this.simulatedOffline,
       lastError: this.lastError,
     };
   }

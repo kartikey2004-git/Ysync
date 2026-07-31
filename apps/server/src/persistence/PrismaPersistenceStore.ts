@@ -7,9 +7,10 @@ import {
   type RgaSnapshotNode,
 } from "@ysync/crdt";
 import { createPrismaClient, type Prisma, type PrismaClient } from "@ysync/database";
-import type { LoadedDocument, PersistenceStore } from "./PersistenceStore.js";
+import type { LoadedDocument, OpBatch, PersistenceStore } from "./PersistenceStore.js";
 
 interface OperationRow {
+  seq: number;
   opId: string;
   type: string;
   originId: string | null;
@@ -47,6 +48,21 @@ function fromRow(row: OperationRow): Op {
   return { type: "delete", targetId: id };
 }
 
+/** Groups consecutive same-seq rows (query is already ordered by seq) into batches. */
+function groupBySeq(rows: OperationRow[]): OpBatch[] {
+  const batches: OpBatch[] = [];
+  for (const row of rows) {
+    const op = fromRow(row);
+    const last = batches[batches.length - 1];
+    if (last && last.seq === row.seq) {
+      last.ops.push(op);
+    } else {
+      batches.push({ seq: row.seq, ops: [op] });
+    }
+  }
+  return batches;
+}
+
 /** Real Postgres-backed PersistenceStore (system-design.md §7), via `@ysync/database`. */
 export class PrismaPersistenceStore implements PersistenceStore {
   private readonly prisma: PrismaClient;
@@ -71,7 +87,7 @@ export class PrismaPersistenceStore implements PersistenceStore {
       orderBy: [{ seq: "asc" }, { id: "asc" }],
     });
 
-    return { snapshot, snapshotSeq, ops: opRows.map(fromRow), latestSeq: document.latestSeq };
+    return { snapshot, snapshotSeq, ops: groupBySeq(opRows), latestSeq: document.latestSeq };
   }
 
   async appendOps(docId: string, seq: number, ops: Op[]): Promise<void> {

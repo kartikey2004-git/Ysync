@@ -89,7 +89,7 @@ describe("RoomManager survives a restart", () => {
 
     const loaded = await persistenceStore.load("doc-1");
     expect(loaded.snapshotSeq).toBe(1); // confirms a snapshot really was taken before restart
-    expect(loaded.ops).toHaveLength(1); // only the trailing op remains in the log
+    expect(loaded.ops).toHaveLength(1); // only the trailing batch (1 op) remains in the log
 
     const after = new RoomManager({
       pubSubBus: new InMemoryPubSubBus(),

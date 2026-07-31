@@ -43,7 +43,7 @@ describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Pos
     await store.appendOps(docId, 1, [opA, opB]);
     const loaded = await store.load(docId);
 
-    expect(loaded.ops).toEqual([opA, opB]);
+    expect(loaded.ops).toEqual([{ seq: 1, ops: [opA, opB] }]);
     expect(loaded.latestSeq).toBe(1);
     expect(loaded.snapshot).toEqual([]);
 
@@ -59,7 +59,7 @@ describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Pos
     await store.appendOps(docId, 1, [op]);
 
     const loaded = await store.load(docId);
-    expect(loaded.ops).toHaveLength(1);
+    expect(loaded.ops).toEqual([{ seq: 1, ops: [op] }]);
 
     await store.close();
   });
@@ -79,7 +79,7 @@ describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Pos
     const loaded = await store.load(docId);
     expect(loaded.snapshotSeq).toBe(1);
     expect(loaded.snapshot).toEqual(snapshotState);
-    expect(loaded.ops).toEqual([opB]);
+    expect(loaded.ops).toEqual([{ seq: 2, ops: [opB] }]);
 
     await store.close();
   });

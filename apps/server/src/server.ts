@@ -62,15 +62,13 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         sendError(socket, "ALREADY_JOINED", "this connection already joined a document");
         return;
       }
-      const room = await roomManager.join(message.docId, message.replicaId, socket);
+      const catchUp = await roomManager.join(message.docId, message.replicaId, socket, message.sinceSeq);
       socketState.set(socket, { docId: message.docId, replicaId: message.replicaId });
-      const snapshot: ServerMessage = {
-        type: "snapshot",
-        docId: message.docId,
-        seq: room.currentSeq(),
-        state: room.snapshot(),
-      };
-      socket.send(JSON.stringify(snapshot));
+      const reply: ServerMessage =
+        catchUp.kind === "sync"
+          ? { type: "sync", docId: message.docId, seq: catchUp.seq, ops: catchUp.ops }
+          : { type: "snapshot", docId: message.docId, seq: catchUp.seq, state: catchUp.state };
+      socket.send(JSON.stringify(reply));
       return;
     }
 

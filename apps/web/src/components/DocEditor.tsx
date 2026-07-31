@@ -20,7 +20,18 @@ export function DocEditor({ slug }: DocEditorProps) {
     <main className="doc-page">
       <header className="doc-header">
         <h1>{slug}</h1>
-        <PresenceList snapshot={snapshot} />
+        <div className="doc-header-controls">
+          <PresenceList snapshot={snapshot} />
+          <label className="offline-toggle">
+            <input
+              type="checkbox"
+              checked={snapshot.simulatedOffline}
+              onChange={(event) => client?.setSimulatedOffline(event.target.checked)}
+              disabled={!client}
+            />
+            Simulate offline
+          </label>
+        </div>
       </header>
       {snapshot.lastError && <p className="doc-error">{snapshot.lastError}</p>}
       {client ? <Editor client={client} /> : <p>Loading…</p>}
