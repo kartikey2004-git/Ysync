@@ -6,6 +6,7 @@ import { createServer, type YSyncServer } from "../src/server.js";
 import { InMemoryPubSubBus } from "../src/pubsub/InMemoryPubSubBus.js";
 import { InMemoryPresenceStore } from "../src/presence/InMemoryPresenceStore.js";
 import { InMemorySeqAllocator } from "../src/seq/InMemorySeqAllocator.js";
+import { InMemoryPersistenceStore } from "../src/persistence/InMemoryPersistenceStore.js";
 
 let server: YSyncServer | undefined;
 
@@ -22,6 +23,7 @@ async function startServer(): Promise<{ url: string }> {
     pubSubBus: new InMemoryPubSubBus(),
     presenceStore: new InMemoryPresenceStore(),
     seqAllocator: new InMemorySeqAllocator(),
+    persistenceStore: new InMemoryPersistenceStore(),
     sweepIntervalMs: 60_000,
     idleTimeoutMs: 60_000,
   });
