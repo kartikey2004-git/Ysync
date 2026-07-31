@@ -1,5 +1,4 @@
-import type { Op, RgaSnapshotNode } from "@ysync/crdt";
-import { opIdKeyOf } from "../util/opId.js";
+import { opIdKeyOf, type Op, type RgaSnapshotNode } from "@ysync/crdt";
 import type { LoadedDocument, PersistenceStore } from "./PersistenceStore.js";
 
 interface StoredOp {

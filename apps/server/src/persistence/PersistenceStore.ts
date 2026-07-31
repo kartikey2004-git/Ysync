@@ -18,7 +18,7 @@ export interface LoadedDocument {
  *
  * Every process that observes an op — not just the one that originated it —
  * may call `appendOps` for it; implementations must make this safe (an op's
- * identity, from `util/opId.ts`, is the natural dedup key).
+ * identity, from `@ysync/crdt`'s `opIdKeyOf`, is the natural dedup key).
  */
 export interface PersistenceStore {
   load(docId: string): Promise<LoadedDocument>;

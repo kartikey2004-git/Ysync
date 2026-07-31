@@ -1,6 +1,12 @@
-import { opIdFromString, opIdToString, type FormatMark, type Op, type RgaSnapshotNode } from "@ysync/crdt";
+import {
+  opIdFromString,
+  opIdKeyOf,
+  opIdToString,
+  type FormatMark,
+  type Op,
+  type RgaSnapshotNode,
+} from "@ysync/crdt";
 import { createPrismaClient, type Prisma, type PrismaClient } from "@ysync/database";
-import { opIdKeyOf } from "../util/opId.js";
 import type { LoadedDocument, PersistenceStore } from "./PersistenceStore.js";
 
 interface OperationRow {
