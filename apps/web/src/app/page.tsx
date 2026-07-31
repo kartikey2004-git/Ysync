@@ -20,6 +20,7 @@ export default function HomePage() {
 
   return (
     <main className="landing">
+      <span className="eyebrow">Collaborative editing</span>
       <h1>YSync</h1>
       <p>A real-time collaborative text editor built on a custom sequence CRDT.</p>
       <button onClick={createNew} className="primary-button">
@@ -31,7 +32,9 @@ export default function HomePage() {
           onChange={(event) => setSlugInput(event.target.value)}
           placeholder="or enter an existing document id"
         />
-        <button type="submit">Join</button>
+        <button type="submit" className="ghost-button">
+          Join
+        </button>
       </form>
     </main>
   );

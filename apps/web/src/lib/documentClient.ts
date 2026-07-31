@@ -1,5 +1,6 @@
 import { Rga, opIdKeyOf, opIdToString, type DeltaOp, type Op } from "@ysync/crdt";
 import { parseServerMessage, type ClientMessage } from "@ysync/protocol";
+import type { Edit as LocalEdit } from "./deltaToEdits";
 import {
   addToOutbox,
   getOrCreateReplica,
@@ -259,20 +260,32 @@ export class DocumentClient {
     return this.rga.getContentsForEditor();
   }
 
-  insertText(index: number, value: string): void {
-    this.recordLocalOp(this.rga.localInsert(index, value));
-  }
-
-  deleteText(index: number): void {
-    this.recordLocalOp(this.rga.localDelete(index));
-  }
-
-  private recordLocalOp(op: Op): void {
-    const opId = opIdKeyOf(op);
-    const record: OutboxRecord = { docId: this.docId, opId, op, createdAt: Date.now() };
-    this.outbox.set(opId, record);
-    void addToOutbox(record);
-    this.send({ type: "op", docId: this.docId, ops: [op] });
+  /**
+   * Applies a whole batch of local edits (one Quill delta's worth) to the
+   * Rga and notifies subscribers exactly once, after all of them have
+   * landed. Editor.tsx must not call the local mutation directly per edit —
+   * Quill has already applied the *entire* delta to its own document by the
+   * time text-change fires, so notifying mid-batch lets Editor's
+   * subscribe-diff-sync (quill.updateContents) run against a half-applied
+   * Rga and desyncs Quill's indices from the CRDT (see docs/changes/
+   * fix-reentrant-notify-editor-desync.md).
+   */
+  applyLocalEdits(edits: LocalEdit[]): void {
+    if (edits.length === 0) return;
+    const ops: Op[] = [];
+    for (const edit of edits) {
+      const op = edit.kind === "insert"
+        ? this.rga.localInsert(edit.index, edit.value)
+        : this.rga.localDelete(edit.index);
+      ops.push(op);
+    }
+    for (const op of ops) {
+      const opId = opIdKeyOf(op);
+      const record: OutboxRecord = { docId: this.docId, opId, op, createdAt: Date.now() };
+      this.outbox.set(opId, record);
+      void addToOutbox(record);
+    }
+    this.send({ type: "op", docId: this.docId, ops });
     this.notify();
   }
 

@@ -12,3 +12,4 @@ generated
 .env.*
 !.env.example
 docs/changes/*
+DESIGN.md
