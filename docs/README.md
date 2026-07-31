@@ -3,9 +3,7 @@
 This document covers the **CRDT algorithm** behind YSync's collaborative
 editing engine — the sequence data structure and its convergence
 properties. For the *system* it runs inside (the WebSocket sync server,
-Postgres persistence, Redis fan-out, the Next.js client), see
-[system-design.md](../system-design.md); for the phased implementation
-history, see [plan.md](../plan.md) and `docs/changes/`.
+Postgres persistence, Redis fan-out, the Next.js client)
 
 ## The RGA Protocol
 
