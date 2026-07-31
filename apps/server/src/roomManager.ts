@@ -83,8 +83,8 @@ export class RoomManager {
     const existing = this.rooms.get(docId);
     if (existing) return existing.room;
 
-    const { snapshot, ops, latestSeq } = await this.persistenceStore.load(docId);
-    const room = Room.hydrate(docId, snapshot, ops, latestSeq);
+    const { snapshot, snapshotSeq, ops, latestSeq } = await this.persistenceStore.load(docId);
+    const room = Room.hydrate(docId, snapshot, snapshotSeq, ops, latestSeq);
     const entry: RoomEntry = {
       room,
       emptySince: null,
@@ -104,12 +104,26 @@ export class RoomManager {
     return room;
   }
 
-  async join(docId: string, replicaId: string, socket: WebSocket): Promise<Room> {
+  /**
+   * Registers the socket in the room and decides how to catch it up
+   * (system-design.md §8.3): an incremental `sync` if this room instance's
+   * in-memory op log fully covers everything after `sinceSeq`, otherwise a
+   * full `snapshot` fallback.
+   */
+  async join(
+    docId: string,
+    replicaId: string,
+    socket: WebSocket,
+    sinceSeq = 0,
+  ): Promise<{ kind: "sync"; seq: number; ops: Op[] } | { kind: "snapshot"; seq: number; state: ReturnType<Room["snapshot"]> }> {
     const room = await this.getOrCreateRoom(docId);
     room.join(replicaId, socket);
     const entry = this.rooms.get(docId);
     if (entry) entry.emptySince = null;
-    return room;
+
+    const incremental = room.getOpsSince(sinceSeq);
+    if (incremental !== null) return { kind: "sync", seq: room.currentSeq(), ops: incremental };
+    return { kind: "snapshot", seq: room.currentSeq(), state: room.snapshot() };
   }
 
   async leave(docId: string, replicaId: string): Promise<void> {
@@ -212,8 +226,9 @@ export class RoomManager {
 
     room.compactTombstones();
     const state = room.snapshot();
-    await this.persistenceStore.writeSnapshot(docId, room.currentSeq(), state);
-    room.resetOpsSinceSnapshot();
+    const atSeq = room.currentSeq();
+    await this.persistenceStore.writeSnapshot(docId, atSeq, state);
+    room.advanceCoverageFloor(atSeq);
   }
 
   private async tick(docId: string): Promise<void> {

@@ -25,7 +25,7 @@ describe("InMemoryPersistenceStore", () => {
     await store.appendOps("doc-1", 1, [opA, opB]);
 
     const loaded = await store.load("doc-1");
-    expect(loaded.ops).toEqual([opA, opB]);
+    expect(loaded.ops).toEqual([{ seq: 1, ops: [opA, opB] }]);
     expect(loaded.latestSeq).toBe(1);
     expect(loaded.snapshot).toEqual([]);
     expect(loaded.snapshotSeq).toBe(0);
@@ -39,7 +39,7 @@ describe("InMemoryPersistenceStore", () => {
     await store.appendOps("doc-1", 1, [op]); // e.g. a redundant fan-in retry
 
     const loaded = await store.load("doc-1");
-    expect(loaded.ops).toHaveLength(1);
+    expect(loaded.ops).toEqual([{ seq: 1, ops: [op] }]);
   });
 
   test("writeSnapshot compacts prior ops and load() reflects the new baseline", async () => {
@@ -59,7 +59,7 @@ describe("InMemoryPersistenceStore", () => {
     const loaded = await store.load("doc-1");
     expect(loaded.snapshot).toEqual(snapshotState);
     expect(loaded.snapshotSeq).toBe(1);
-    expect(loaded.ops).toEqual([opC]); // opA/opB pruned — superseded by the snapshot
+    expect(loaded.ops).toEqual([{ seq: 2, ops: [opC] }]); // opA/opB pruned — superseded by the snapshot
     expect(loaded.latestSeq).toBe(2);
   });
 });

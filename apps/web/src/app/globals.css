@@ -109,6 +109,21 @@ a {
   flex-wrap: wrap;
 }
 
+.doc-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.offline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .doc-error {
   color: #e63946;
 }

@@ -1,5 +1,6 @@
 import { Rga, type RgaSnapshotNode, type Op } from "@ysync/crdt";
 import type { ServerMessage } from "@ysync/protocol";
+import type { OpBatch } from "./persistence/PersistenceStore.js";
 import type { WebSocket } from "ws";
 
 /**
@@ -14,20 +15,41 @@ export class Room {
   private readonly sockets = new Map<string, WebSocket>();
   private seq = 0;
   private opsSinceSnapshot = 0;
+  /** Ops applied since this room instance was created/hydrated, for `sinceSeq` catch-up (system-design.md §8.3). */
+  private opLog: OpBatch[] = [];
+  /** Full op history is available for seq > coverageFloor; at/before it, only the compacted snapshot exists. */
+  private coverageFloor = 0;
 
   constructor(docId: string, initialRga?: Rga) {
     this.docId = docId;
     this.rga = initialRga ?? new Rga(`server:${docId}`);
   }
 
-  /** Rebuilds a room from a persisted snapshot (if any) plus the ops recorded after it. */
-  static hydrate(docId: string, snapshot: RgaSnapshotNode[], trailingOps: Op[], latestSeq: number): Room {
+  /** Rebuilds a room from a persisted snapshot (if any) plus the op batches recorded after it. */
+  static hydrate(docId: string, snapshot: RgaSnapshotNode[], snapshotSeq: number, trailingOpBatches: OpBatch[], latestSeq: number): Room {
     const rga = snapshot.length > 0 ? Rga.fromSnapshot(snapshot, `server:${docId}`) : new Rga(`server:${docId}`);
     const room = new Room(docId, rga);
-    rga.applyAll(trailingOps);
+    const flatOps = trailingOpBatches.flatMap((batch) => batch.ops);
+    rga.applyAll(flatOps);
     room.seq = latestSeq;
-    room.opsSinceSnapshot = trailingOps.length;
+    room.opsSinceSnapshot = flatOps.length;
+    room.opLog = trailingOpBatches.slice();
+    room.coverageFloor = snapshotSeq;
     return room;
+  }
+
+  /**
+   * Ops after `sinceSeq`, or `null` if this room instance can't fill the
+   * gap from memory (caller should fall back to a full snapshot).
+   */
+  getOpsSince(sinceSeq: number): Op[] | null {
+    if (sinceSeq >= this.seq) return [];
+    if (sinceSeq < this.coverageFloor) return null;
+    const ops: Op[] = [];
+    for (const batch of this.opLog) {
+      if (batch.seq > sinceSeq) ops.push(...batch.ops);
+    }
+    return ops;
   }
 
   join(replicaId: string, socket: WebSocket): void {
@@ -63,13 +85,17 @@ export class Room {
     this.rga.applyAll(ops);
     this.seq = seq;
     this.opsSinceSnapshot += ops.length;
+    this.opLog.push({ seq, ops });
   }
 
   getOpsSinceSnapshot(): number {
     return this.opsSinceSnapshot;
   }
 
-  resetOpsSinceSnapshot(): void {
+  /** Called after a snapshot is durably written: trims opLog to what's still needed and moves the coverage floor up. */
+  advanceCoverageFloor(atSeq: number): void {
+    this.coverageFloor = atSeq;
+    this.opLog = this.opLog.filter((batch) => batch.seq > atSeq);
     this.opsSinceSnapshot = 0;
   }
 

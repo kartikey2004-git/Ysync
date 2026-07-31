@@ -1,5 +1,5 @@
 import { opIdKeyOf, type Op, type RgaSnapshotNode } from "@ysync/crdt";
-import type { LoadedDocument, PersistenceStore } from "./PersistenceStore.js";
+import type { LoadedDocument, OpBatch, PersistenceStore } from "./PersistenceStore.js";
 
 interface StoredOp {
   seq: number;
@@ -17,6 +17,20 @@ function emptyDoc(): DocState {
   return { latestSeq: 0, ops: [], seenOpIds: new Set(), snapshot: null };
 }
 
+/** Groups consecutive same-seq rows (insertion order is already seq-ordered) into batches. */
+function groupBySeq(rows: StoredOp[]): OpBatch[] {
+  const batches: OpBatch[] = [];
+  for (const row of rows) {
+    const last = batches[batches.length - 1];
+    if (last && last.seq === row.seq) {
+      last.ops.push(row.op);
+    } else {
+      batches.push({ seq: row.seq, ops: [row.op] });
+    }
+  }
+  return batches;
+}
+
 /** In-memory stand-in for Document/Operation/Snapshot, same contract as PrismaPersistenceStore. */
 export class InMemoryPersistenceStore implements PersistenceStore {
   private readonly docs = new Map<string, DocState>();
@@ -28,7 +42,7 @@ export class InMemoryPersistenceStore implements PersistenceStore {
     return {
       snapshot: doc.snapshot?.state ?? [],
       snapshotSeq: doc.snapshot?.atSeq ?? 0,
-      ops: doc.ops.map((row) => row.op),
+      ops: groupBySeq(doc.ops),
       latestSeq: doc.latestSeq,
     };
   }
