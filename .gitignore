@@ -13,3 +13,11 @@ generated
 !.env.example
 docs/changes/*
 DESIGN.md
+DEPLOY_CHECKLIST.md
+DEPLOYMENT.md
+
+
+# Ignore Prisma generated client
+packages/database/node_modules/.prisma
+packages/database/prisma/client
+
