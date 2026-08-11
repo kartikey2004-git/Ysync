@@ -21,3 +21,4 @@ DEPLOYMENT.md
 packages/database/node_modules/.prisma
 packages/database/prisma/client
 
+docs/changes/*
