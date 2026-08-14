@@ -11,10 +11,7 @@ generated
 .env
 .env.*
 !.env.example
-docs/changes/*
-DESIGN.md
-DEPLOY_CHECKLIST.md
-DEPLOYMENT.md
+docs/
 
 
 # Ignore Prisma generated client
