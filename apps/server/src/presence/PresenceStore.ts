@@ -6,21 +6,19 @@ export interface PresenceEntry {
   color?: string;
 }
 
-/**
- * Ephemeral awareness storage (system-design.md §6.5) — never touches
- * Postgres. TTL-based rather than tied to socket close, so presence also
- * clears out if a connection dies without a clean disconnect.
- *
- * `sweep` is pull-based rather than the store running its own timers: the
- * owning `Room` already runs a periodic tick (see room.ts) and calls
- * `sweep` on it, so there's one clock per active document instead of the
- * store needing to track which docIds exist.
- */
+// Ephemeral awareness storage hai — Postgres ko kabhi touch nahi karta. TTL-based
+// hai, socket close se bandha nahi hai, isliye agar connection bina clean
+// disconnect ke mar jaaye toh bhi presence apne aap saaf ho jayegi.
+//
+// sweep pull-based hai, store apna timer nahi chalata — owning Room pehle se
+// periodic tick chala raha hai (room.ts dekho) aur usi pe sweep call karta hai,
+// isliye ek active document pe ek hi clock chalta hai, store ko alag se
+// docIds track karne ki zaroorat nahi.
 export interface PresenceStore {
   set(docId: string, entry: PresenceEntry, ttlMs: number): Promise<void>;
   remove(docId: string, replicaId: string): Promise<void>;
   list(docId: string): Promise<PresenceEntry[]>;
-  /** Removes entries past their TTL for `docId`; returns the replicaIds that expired. */
+  // docId ke liye TTL cross kar chuke entries hata deta hai; jo replicaIds expire hue unhe return karta hai
   sweep(docId: string): Promise<string[]>;
   close(): Promise<void>;
 }

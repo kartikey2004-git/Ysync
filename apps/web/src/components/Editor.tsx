@@ -11,18 +11,13 @@ interface EditorProps {
   client: DocumentClient;
 }
 
-/**
- * Quill <-> CRDT binding (system-design.md §8.4). Local user edits go
- * straight through `deltaToEdits` into `client.applyLocalEdits`, applied
- * and notified as one batch — Quill has already applied the user's own
- * edit to its own document, so nothing gets written back to Quill for that
- * path, and notifying mid-batch would let the remote-sync path below race
- * a half-applied edit (see docs/changes/fix-reentrant-notify-editor-desync.md).
- * Remote/reconciled
- * state changes are applied via a Delta diff (`quill.updateContents`)
- * rather than a full `setContents` replace, so the local cursor isn't
- * clobbered by someone else's edit.
- */
+// Quill aur CRDT ke beech ka binding hai. Local user edits seedha
+// deltaToEdits se ho ke client.applyLocalEdits mein ek batch ki tarah jaate
+// hain — Quill apna edit apne document pe already apply kar chuka hota hai,
+// isliye us path pe Quill mein kuch wapas likhna nahi padta, aur beech mein
+// notify karne se neeche wala remote-sync path half-applied edit ke saath
+// race kar sakta hai. Remote/reconciled changes Delta diff (quill.updateContents)
+// se aate hain, poora setContents replace nahi karte, taaki local cursor na hile.
 export function Editor({ client }: EditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -30,14 +25,20 @@ export function Editor({ client }: EditorProps) {
     const container = containerRef.current;
     if (!container) return;
 
+    // React StrictMode mein effect double-run hota hai, purana Quill instance
+    // ka DOM saaf kar do warna do editors ek saath dikhne lagenge
     container.innerHTML = "";
     const editorEl = document.createElement("div");
     container.appendChild(editorEl);
     const quill = new Quill(editorEl, { theme: "snow" });
 
+    // "silent" isliye taaki initial load pe text-change event fire na ho, warna
+    // apna hi loaded content dobara applyLocalEdits mein chala jayega
     quill.setContents(new Delta(client.getContentsForEditor()), "silent");
 
     const handleTextChange = (delta: QuillDelta, _oldDelta: unknown, source: string) => {
+      // source "api" hoga jab hum khud updateContents call karte hain (remote sync) —
+      // sirf real user typing yahan se aage badhni chahiye
       if (source !== "user") return;
       client.applyLocalEdits(deltaToEdits(delta));
     };
@@ -53,6 +54,8 @@ export function Editor({ client }: EditorProps) {
     };
     quill.on("selection-change", handleSelectionChange);
 
+    // client change hote hi (remote op, presence, jo bhi) yeh fire hota hai —
+    // diff nikal ke sirf jo actually badla wahi Quill mein daalo, cursor position bachi rahe
     const unsubscribe = client.subscribe(() => {
       const currentDelta = quill.getContents();
       const nextDelta = new Delta(client.getContentsForEditor());

@@ -6,34 +6,28 @@ export interface OpBatch {
 }
 
 export interface LoadedDocument {
-  /** Latest compacted snapshot, or [] if the document has never been snapshotted. */
+  // latest compacted snapshot, ya [] agar document ka kabhi snapshot liya hi nahi
   snapshot: RgaSnapshotNode[];
-  /** The seq the snapshot was taken at (0 if there is no snapshot). */
+  // jis seq pe snapshot liya tha (0 agar snapshot hai hi nahi)
   snapshotSeq: number;
-  /**
-   * Every op recorded after the snapshot, grouped by the seq of the batch
-   * it was originally submitted in — `Room.hydrate` needs these batch
-   * boundaries to seed its in-memory op log for `sinceSeq` catch-up
-   * (system-design.md §8.3), not just the flattened op list.
-   */
+  // snapshot ke baad ke saare ops, jis batch mein originally submit hue thay
+  // usi seq se grouped — Room.hydrate ko yeh batch boundaries chahiye sinceSeq
+  // catch-up ke liye, sirf flattened op list se kaam nahi chalega.
   ops: OpBatch[];
-  /** The document's latest known seq (from Document.latestSeq), for a room with no ops at all. */
+  // document ka latest known seq (Document.latestSeq se), us room ke liye jiske paas koi ops hi nahi hain
   latestSeq: number;
 }
 
-/**
- * Durable storage for documents (system-design.md §6.3/§6.4/§7). `RoomManager`
- * uses this for both the write path (append ops, periodic snapshot+GC) and
- * cold-room hydration on `join`.
- *
- * Every process that observes an op — not just the one that originated it —
- * may call `appendOps` for it; implementations must make this safe (an op's
- * identity, from `@ysync/crdt`'s `opIdKeyOf`, is the natural dedup key).
- */
+// Documents ke liye durable storage. RoomManager isko write path (ops append
+// karna, periodic snapshot+GC) aur cold-room hydration (join ke waqt) dono ke liye use karta hai.
+//
+// koi bhi process jo ek op dekhe — chahe usne khud generate na kiya ho — woh
+// appendOps call kar sakta hai; implementation ko yeh safe banana padega (op ki
+// identity, @ysync/crdt ke opIdKeyOf se, natural dedup key hai).
 export interface PersistenceStore {
   load(docId: string): Promise<LoadedDocument>;
   appendOps(docId: string, seq: number, ops: Op[]): Promise<void>;
-  /** Writes a snapshot at `atSeq` and deletes now-redundant ops (seq <= atSeq). */
+  // atSeq pe snapshot likhta hai aur ab-redundant ops (seq <= atSeq) delete kar deta hai
   writeSnapshot(docId: string, atSeq: number, state: RgaSnapshotNode[]): Promise<void>;
   close(): Promise<void>;
 }

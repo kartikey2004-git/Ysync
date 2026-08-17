@@ -13,7 +13,7 @@ const selectionSchema = z
   })
   .nullable();
 
-/** Shared awareness fields carried by both the client's `presence` message and the server's `presence-update` broadcast. */
+// yeh awareness fields client ke presence message aur server ke presence-update broadcast dono mein common hain
 const awarenessFields = {
   cursor: z.number().int().nonnegative().nullable().optional(),
   selection: selectionSchema.optional(),

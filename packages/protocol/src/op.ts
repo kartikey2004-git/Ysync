@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-/** Mirrors @ysync/crdt's `OpId`. */
+// @ysync/crdt ke OpId ko mirror karta hai
 export const opIdSchema = z.object({
   counter: z.number().int().nonnegative(),
   replicaId: z.string().min(1),
 });
 
-/** Mirrors @ysync/crdt's `FormatMark`. */
+// @ysync/crdt ke FormatMark ko mirror karta hai
 export const formatMarkSchema = z.record(z.literal(true));
 
 export const insertOpSchema = z.object({
@@ -22,7 +22,7 @@ export const deleteOpSchema = z.object({
   targetId: opIdSchema,
 });
 
-/** Mirrors @ysync/crdt's `Op` union. */
+// @ysync/crdt ke Op union ko mirror karta hai
 export const opSchema = z.discriminatedUnion("type", [insertOpSchema, deleteOpSchema]);
 
 export type OpIdShape = z.infer<typeof opIdSchema>;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { deltaToEdits } from "./deltaToEdits";
 
+// deltaToEdits ki koi Quill dependency nahi hai, isliye yeh plain unit tests hain raw delta shapes ke against
 describe("deltaToEdits", () => {
   test("plain insert at the start", () => {
     expect(deltaToEdits({ ops: [{ insert: "abc" }] })).toEqual([

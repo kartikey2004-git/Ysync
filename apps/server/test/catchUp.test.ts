@@ -28,12 +28,9 @@ function createManager(overrides: { sweepIntervalMs?: number; snapshotOpThreshol
   });
 }
 
-/**
- * Unit tests for the sync-vs-snapshot catch-up decision added in Phase 6
- * (system-design.md §8.3) — complements the bigger scenario test in
- * offlineReconnect.scenario.test.ts, which exercises this through a full
- * multi-client reconnect flow instead of directly.
- */
+// sync-vs-snapshot catch-up decision ke unit tests hain — bada scenario test
+// offlineReconnect.scenario.test.ts mein hai, jo isko poore multi-client
+// reconnect flow se test karta hai, yahan directly test kar rahe hain
 describe("RoomManager.join catch-up decision", () => {
   test("a fresh room with sinceSeq=0 returns an empty sync (nothing to catch up on)", async () => {
     const manager = createManager();
@@ -68,7 +65,7 @@ describe("RoomManager.join catch-up decision", () => {
     await manager.applyClientOp("doc-1", "alice", [opC]); // seq 3
 
     const bob = fakeSocket();
-    const result = await manager.join("doc-1", "bob", bob.socket, 1); // bob last saw seq 1
+    const result = await manager.join("doc-1", "bob", bob.socket, 1); // bob ne last seq 1 tak dekha tha
 
     expect(result).toEqual({ kind: "sync", seq: 3, ops: [opB, opC] });
 
@@ -84,7 +81,7 @@ describe("RoomManager.join catch-up decision", () => {
     ]);
 
     const bob = fakeSocket();
-    const result = await manager.join("doc-1", "bob", bob.socket, 1); // already caught up
+    const result = await manager.join("doc-1", "bob", bob.socket, 1); // bob pehle se hi caught up hai
 
     expect(result).toEqual({ kind: "sync", seq: 1, ops: [] });
 
@@ -98,10 +95,10 @@ describe("RoomManager.join catch-up decision", () => {
     await manager.applyClientOp("doc-1", "alice", [
       { type: "insert", id: { counter: 1, replicaId: "alice" }, originId: null, value: "a" },
     ]);
-    await wait(60); // let the sweep tick snapshot + advance the coverage floor
+    await wait(60); // sweep tick ko time do taaki snapshot le le aur coverage floor aage badha de
 
     const bob = fakeSocket();
-    const result = await manager.join("doc-1", "bob", bob.socket, 0); // bob's sinceSeq predates the snapshot
+    const result = await manager.join("doc-1", "bob", bob.socket, 0); // bob ka sinceSeq snapshot se pehle ka hai
 
     expect(result.kind).toBe("snapshot");
     if (result.kind === "snapshot") {

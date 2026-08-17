@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
+// yahan kuch custom karne ki zaroorat nahi — Cloudflare-specific build/runtime wiring open-next.config.ts mein hai
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

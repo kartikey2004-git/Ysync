@@ -46,19 +46,16 @@ const EMPTY_SNAPSHOT: DocumentClientSnapshot = {
   simulatedOffline: false,
 };
 
-/**
- * Owns the local Rga, the WS connection (join/op/presence/leave, reconnect
- * with backoff, presence heartbeat), and IndexedDB persistence for one
- * document (system-design.md §8.1). Framework-agnostic — `useDocument`
- * wraps it for React via `subscribe`/`getSnapshot`.
- *
- * Reconnect model (system-design.md §8.3): `join` carries `sinceSeq`, and
- * the server replies with either an incremental `sync` (just the missing
- * ops) or a full `snapshot` fallback. Either way, this client reconciles
- * its local state and then flushes any not-yet-acked outbox ops as a
- * fresh `op` message — correct whether this is the first connection or a
- * reconnect after a drop, real or simulated (`setSimulatedOffline`).
- */
+// Local Rga, WS connection (join/op/presence/leave, backoff wala reconnect,
+// presence heartbeat), aur ek document ke liye IndexedDB persistence — sab
+// yahi class handle karti hai. Framework-agnostic hai — useDocument isko
+// React ke liye subscribe/getSnapshot se wrap karta hai.
+//
+// Reconnect model: join mein sinceSeq bhejte hain, server ya toh incremental
+// sync (sirf missing ops) ya poora snapshot fallback bhejta hai. Dono case
+// mein client apna local state reconcile karta hai aur jo outbox ops abhi
+// tak ack nahi hue unhe fresh op message se dobara bhej deta hai — chahe
+// yeh pehla connection ho ya real/simulated drop ke baad ka reconnect.
 export class DocumentClient {
   readonly docId: string;
   private readonly wsUrl: string;
@@ -85,7 +82,7 @@ export class DocumentClient {
   constructor(docId: string, wsUrl: string) {
     this.docId = docId;
     this.wsUrl = wsUrl;
-    this.rga = new Rga(); // replaced with the real replicaId once init() resolves
+    this.rga = new Rga(); // yeh temporary hai, init() resolve hone pe real replicaId wala Rga aa jayega
     void this.init();
   }
 
@@ -104,6 +101,8 @@ export class DocumentClient {
       : new Rga(this.replicaId);
     this.lastAckedSeq = documentRecord?.lastAckedSeq ?? 0;
 
+    // pehle se pending outbox ops ko local Rga mein wapas apply karo — offline
+    // edits ka reflect hona connect hone se pehle hi zaroori hai
     for (const record of outboxRecords) {
       this.outbox.set(record.opId, record);
       this.rga.apply(record.op);
@@ -114,6 +113,7 @@ export class DocumentClient {
   }
 
   private connect(): void {
+    // user ne khud dispose kiya ho ya offline simulate kar rahe hon toh naya connection mat kholo
     if (this.closedByUser || this.simulatedOffline) return;
     this.connectionState = "connecting";
     this.notify();
@@ -122,6 +122,7 @@ export class DocumentClient {
     this.ws = ws;
 
     ws.addEventListener("open", () => {
+      // connect ho gaya, backoff counter reset kar do — agli baar disconnect hua toh phir 500ms se shuru hoga
       this.reconnectAttempt = 0;
       this.connectionState = "open";
       this.send({ type: "join", docId: this.docId, replicaId: this.replicaId, sinceSeq: this.lastAckedSeq });
@@ -137,12 +138,16 @@ export class DocumentClient {
       this.connectionState = "closed";
       this.stopHeartbeat();
       this.notify();
+      // agar user ne khud close kiya ya offline mode on hai toh reconnect mat karo,
+      // warna network drop wagera ke baad khud retry karega
       if (!this.closedByUser && !this.simulatedOffline) this.scheduleReconnect();
     });
   }
 
   private scheduleReconnect(): void {
+    // pehle se ek reconnect timer chal raha hai toh dobara schedule mat karo
     if (this.reconnectTimer) return;
+    // exponential backoff: 500ms, 1s, 2s... MAX_RECONNECT_DELAY_MS tak cap
     const delay = Math.min(500 * 2 ** this.reconnectAttempt, MAX_RECONNECT_DELAY_MS);
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
@@ -182,9 +187,9 @@ export class DocumentClient {
 
     switch (message.type) {
       case "snapshot": {
-        // rebuild from scratch — our own outbox ops aren't in the server's
-        // state (that's why they're still outbox entries), so reintegrate
-        // them on top before flushing.
+        // poora scratch se rebuild karo — apne outbox ops server ke state mein
+        // nahi hain (isiliye toh woh abhi bhi outbox mein pade hain), isliye
+        // flush karne se pehle unhe upar se dobara integrate karo
         this.rga = message.state.length > 0 ? Rga.fromSnapshot(message.state, this.replicaId) : new Rga(this.replicaId);
         for (const record of this.outbox.values()) {
           this.rga.apply(record.op);
@@ -196,10 +201,10 @@ export class DocumentClient {
         break;
       }
       case "sync": {
-        // incremental catch-up — our own outbox ops are already part of
-        // the local rga (applied optimistically when created), so just
-        // integrate what we were missing and flush the outbox in case the
-        // server never actually received it (e.g. dropped before an ack).
+        // incremental catch-up — apne outbox ops already local rga mein hain
+        // (create hote hi optimistically apply ho chuke thay), bas jo miss
+        // hua woh integrate karo, aur outbox flush kar do — ho sakta hai
+        // server ne pehle wala op receive hi na kiya ho (ack se pehle drop ho gaya)
         this.rga.applyAll(message.ops);
         this.lastAckedSeq = message.seq;
         void this.persistDocumentState();
@@ -213,6 +218,7 @@ export class DocumentClient {
         break;
       }
       case "ack": {
+        // server ne durably save kar liya, ab outbox mein rakhne ki zaroorat nahi
         for (const opId of message.opIds) {
           const key = opIdToString(opId);
           this.outbox.delete(key);
@@ -255,21 +261,18 @@ export class DocumentClient {
     });
   }
 
-  /** Quill-Delta-shaped current content — for the editor binding, not the React snapshot (avoids recomputing on every notify). */
+  // Quill-Delta-shaped current content hai — editor binding ke liye, React snapshot ke liye nahi (har notify pe recompute nahi karna padta)
   getContentsForEditor(): DeltaOp[] {
     return this.rga.getContentsForEditor();
   }
 
-  /**
-   * Applies a whole batch of local edits (one Quill delta's worth) to the
-   * Rga and notifies subscribers exactly once, after all of them have
-   * landed. Editor.tsx must not call the local mutation directly per edit —
-   * Quill has already applied the *entire* delta to its own document by the
-   * time text-change fires, so notifying mid-batch lets Editor's
-   * subscribe-diff-sync (quill.updateContents) run against a half-applied
-   * Rga and desyncs Quill's indices from the CRDT (see docs/changes/
-   * fix-reentrant-notify-editor-desync.md).
-   */
+  // Ek poore batch ke local edits (ek Quill delta jitne) Rga pe apply karta hai
+  // aur subscribers ko sirf ek baar notify karta hai, sab land hone ke baad.
+  // Editor.tsx ko per-edit local mutation call nahi karna chahiye — Quill
+  // apna poora delta apne document pe already apply kar chuka hota hai
+  // text-change fire hone tak, isliye beech mein notify karne se Editor ka
+  // subscribe-diff-sync (quill.updateContents) half-applied Rga ke against
+  // chal jayega aur Quill ke indices CRDT se desync ho jayenge.
   applyLocalEdits(edits: LocalEdit[]): void {
     if (edits.length === 0) return;
     const ops: Op[] = [];
@@ -289,20 +292,19 @@ export class DocumentClient {
     this.notify();
   }
 
-  /** Re-sends every not-yet-acked local op as one `op` message — safe to call redundantly (server-side idempotent on opId). */
+  // jitne bhi local ops abhi ack nahi hue, sabko ek op message mein dobara bhej deta hai —
+  // dobara call karna bhi safe hai, server side opId pe idempotent hai
   private flushOutbox(): void {
     if (this.outbox.size === 0) return;
     const ops = [...this.outbox.values()].map((record) => record.op);
     this.send({ type: "op", docId: this.docId, ops });
   }
 
-  /**
-   * Manual offline simulation (plan.md Phase 6): closes the live
-   * connection and skips reconnect while `true` — local edits keep
-   * applying and queuing in the outbox exactly as during a real network
-   * drop. Reconnecting on `false` drives the same join -> catch-up ->
-   * outbox-flush path a real reconnect does.
-   */
+  // Manual offline simulation hai — live connection band kar deta hai aur jab
+  // tak true hai reconnect skip karta hai, local edits waise hi apply aur
+  // outbox mein queue hote rehte hain jaise real network drop mein hota. false
+  // karne pe wahi join -> catch-up -> outbox-flush path chalta hai jo real
+  // reconnect mein chalta hai.
   setSimulatedOffline(offline: boolean): void {
     if (this.simulatedOffline === offline) return;
     this.simulatedOffline = offline;

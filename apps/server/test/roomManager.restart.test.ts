@@ -16,13 +16,11 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * "Kill and restart the server" (plan.md Phase 4 exit criterion), simulated
- * in-process: everything owned by a RoomManager (its Rooms, sweep timers)
- * is discarded, but the persistence/seq/presence stores — the stand-ins for
- * Postgres/Redis — survive, exactly like a real process restart against an
- * external database.
- */
+// "Server kill karke restart karo" wala scenario, in-process simulate kiya hai:
+// RoomManager ke paas jo bhi tha (Rooms, sweep timers) sab discard ho jata hai,
+// lekin persistence/seq/presence stores — jo Postgres/Redis ke stand-in hain —
+// bache rehte hain, bilkul waise jaise real process restart mein external
+// database bacha rehta hai.
 describe("RoomManager survives a restart", () => {
   test("state recovers from raw ops when no snapshot was ever taken", async () => {
     const persistenceStore = new InMemoryPersistenceStore();
@@ -44,13 +42,13 @@ describe("RoomManager survives a restart", () => {
     await before.applyClientOp("doc-1", "alice", [
       { type: "insert", id: { counter: 2, replicaId: "alice" }, originId: { counter: 1, replicaId: "alice" }, value: "i" },
     ]);
-    await before.close(); // "crash" — no clean shutdown snapshot, just gone
+    await before.close(); // "crash" simulate kar rahe hain — koi clean shutdown snapshot nahi, bas gayab
 
     const after = new RoomManager({
       pubSubBus: new InMemoryPubSubBus(),
       presenceStore: new InMemoryPresenceStore(),
       seqAllocator: new InMemorySeqAllocator(seqCounter),
-      persistenceStore, // same durable store the old process wrote to
+      persistenceStore, // wahi durable store jispe purane process ne likha tha
       sweepIntervalMs: 60_000,
       idleTimeoutMs: 60_000,
     });
@@ -73,23 +71,23 @@ describe("RoomManager survives a restart", () => {
       persistenceStore,
       sweepIntervalMs: 20,
       idleTimeoutMs: 60_000,
-      snapshotOpThreshold: 1, // snapshot as soon as there's anything to snapshot
+      snapshotOpThreshold: 1, // ek bhi op ho, snapshot le lo turant
     });
     const alice = fakeSocket();
     await before.join("doc-1", "alice", alice.socket);
     await before.applyClientOp("doc-1", "alice", [
       { type: "insert", id: { counter: 1, replicaId: "alice" }, originId: null, value: "h" },
     ]);
-    await wait(60); // let the sweep tick take a snapshot
-    // a trailing op applied *after* the snapshot, not yet compacted
+    await wait(60); // sweep tick ko time do snapshot lene ke liye
+    // yeh op snapshot ke *baad* apply hua hai, abhi compact nahi hua
     await before.applyClientOp("doc-1", "alice", [
       { type: "insert", id: { counter: 2, replicaId: "alice" }, originId: { counter: 1, replicaId: "alice" }, value: "i" },
     ]);
     await before.close();
 
     const loaded = await persistenceStore.load("doc-1");
-    expect(loaded.snapshotSeq).toBe(1); // confirms a snapshot really was taken before restart
-    expect(loaded.ops).toHaveLength(1); // only the trailing batch (1 op) remains in the log
+    expect(loaded.snapshotSeq).toBe(1); // confirm karta hai ki restart se pehle snapshot waqai liya gaya tha
+    expect(loaded.ops).toHaveLength(1); // sirf trailing batch (1 op) bacha hai log mein
 
     const after = new RoomManager({
       pubSubBus: new InMemoryPubSubBus(),

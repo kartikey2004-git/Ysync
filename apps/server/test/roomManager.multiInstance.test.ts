@@ -22,13 +22,10 @@ function messageTypes(sent: string[]): string[] {
   return sent.map((raw) => (JSON.parse(raw) as { type: string }).type);
 }
 
-/**
- * Two independent RoomManagers sharing one in-memory "Redis" (broker,
- * presence store, seq counter) — simulating two server processes behind
- * the same real Redis, per system-design.md §6.2. See
- * docs/changes/phase-3-server-core.md for why this is a meaningful
- * substitute for a live Redis in the default test run.
- */
+// Do alag RoomManagers ek hi in-memory "Redis" (broker, presence store, seq
+// counter) share kar rahe hain — same real Redis ke peeche do server processes
+// simulate ho rahe hain, taaki multi-instance fan-out test ho jaaye bina
+// default test run mein live Redis chalaye.
 function createTestManagers() {
   const broker = new InMemoryBroker();
   const presenceStore = new InMemoryPresenceStore();
@@ -85,10 +82,10 @@ describe("RoomManager multi-instance fan-out", () => {
     expect(roomA.snapshot()).toEqual(roomB.snapshot());
     expect(roomB.snapshot()[0]?.value).toBe("h");
 
-    // alice (the sender) gets an ack, not a broadcast of her own op
+    // alice (sender) ko ack milega, apna hi op broadcast wapas nahi aayega
     expect(messageTypes(alice.sent)).toContain("ack");
     expect(messageTypes(alice.sent)).not.toContain("broadcast-op");
-    // bob, on the other instance, only ever sees it via fan-out
+    // bob doosre instance pe hai, usko yeh sirf fan-out se hi milega
     expect(messageTypes(bob.sent)).toContain("broadcast-op");
   });
 

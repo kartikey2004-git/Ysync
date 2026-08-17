@@ -3,21 +3,18 @@ import type { ServerMessage } from "@ysync/protocol";
 import type { OpBatch } from "./persistence/PersistenceStore.js";
 import type { WebSocket } from "ws";
 
-/**
- * Per-document in-memory state (system-design.md §6.1): the live `Rga` and
- * the sockets currently subscribed to it. A cold room is hydrated from its
- * latest persisted snapshot + trailing ops via `Room.hydrate` rather than
- * always starting empty (system-design.md §6.4/§7).
- */
+// Per-document in-memory state — live Rga aur jo sockets isse subscribed hain.
+// Cold room hamesha khali shuru nahi hoti, Room.hydrate se latest persisted
+// snapshot + baaki trailing ops load karke bani hoti hai.
 export class Room {
   readonly docId: string;
   private readonly rga: Rga;
   private readonly sockets = new Map<string, WebSocket>();
   private seq = 0;
   private opsSinceSnapshot = 0;
-  /** Ops applied since this room instance was created/hydrated, for `sinceSeq` catch-up (system-design.md §8.3). */
+  // yeh room banne/hydrate hone ke baad se jitne ops apply hue, sinceSeq catch-up ke liye chahiye
   private opLog: OpBatch[] = [];
-  /** Full op history is available for seq > coverageFloor; at/before it, only the compacted snapshot exists. */
+  // coverageFloor se pehle ka poora op history nahi hota, sirf compacted snapshot bacha hota hai
   private coverageFloor = 0;
 
   constructor(docId: string, initialRga?: Rga) {
@@ -25,7 +22,7 @@ export class Room {
     this.rga = initialRga ?? new Rga(`server:${docId}`);
   }
 
-  /** Rebuilds a room from a persisted snapshot (if any) plus the op batches recorded after it. */
+  // persisted snapshot (agar hai) aur uske baad ke op batches se room dobara banata hai
   static hydrate(docId: string, snapshot: RgaSnapshotNode[], snapshotSeq: number, trailingOpBatches: OpBatch[], latestSeq: number): Room {
     const rga = snapshot.length > 0 ? Rga.fromSnapshot(snapshot, `server:${docId}`) : new Rga(`server:${docId}`);
     const room = new Room(docId, rga);
@@ -38,10 +35,8 @@ export class Room {
     return room;
   }
 
-  /**
-   * Ops after `sinceSeq`, or `null` if this room instance can't fill the
-   * gap from memory (caller should fall back to a full snapshot).
-   */
+  // sinceSeq ke baad ke ops de deta hai, ya null agar memory mein gap fill nahi ho sakta
+  // (caller ko phir poora snapshot fallback karna padega)
   getOpsSince(sinceSeq: number): Op[] | null {
     if (sinceSeq >= this.seq) return [];
     if (sinceSeq < this.coverageFloor) return null;
@@ -80,7 +75,7 @@ export class Room {
     return this.rga.toSnapshot();
   }
 
-  /** Applies a batch of ops (local or fanned-in from another process) and adopts the authoritative seq for the batch. */
+  // local ho ya doosre process se fan-in hua batch, dono ko apply karta hai aur uska authoritative seq apna leta hai
   applyOps(ops: Op[], seq: number): void {
     this.rga.applyAll(ops);
     this.seq = seq;
@@ -92,20 +87,21 @@ export class Room {
     return this.opsSinceSnapshot;
   }
 
-  /** Called after a snapshot is durably written: trims opLog to what's still needed and moves the coverage floor up. */
+  // snapshot durably write hone ke baad call hota hai — opLog se purana kaat do, coverage floor upar badha do
   advanceCoverageFloor(atSeq: number): void {
     this.coverageFloor = atSeq;
     this.opLog = this.opLog.filter((batch) => batch.seq > atSeq);
     this.opsSinceSnapshot = 0;
   }
 
-  /** Clears payload from tombstoned nodes (system-design.md §4.5) — call right before writing a snapshot. */
+  // tombstoned nodes ka payload clear karta hai — snapshot likhne se theek pehle isko call karo
   compactTombstones(): void {
     this.rga.compactTombstones();
   }
 
   sendTo(replicaId: string, message: ServerMessage): void {
     const socket = this.sockets.get(replicaId);
+    // close event abhi tak fire nahi hua ho sakta, isliye readyState bhi check karo, sirf map mein hona kaafi nahi
     if (!socket || socket.readyState !== socket.OPEN) return;
     socket.send(JSON.stringify(message));
   }
@@ -113,6 +109,7 @@ export class Room {
   broadcast(message: ServerMessage, exceptReplicaId?: string): void {
     const payload = JSON.stringify(message);
     for (const [replicaId, socket] of this.sockets) {
+      // sender ko apna hi op wapas nahi bhejna — usko already ack milega
       if (replicaId === exceptReplicaId) continue;
       if (socket.readyState !== socket.OPEN) continue;
       socket.send(payload);

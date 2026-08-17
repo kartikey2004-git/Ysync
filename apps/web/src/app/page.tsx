@@ -1,4 +1,4 @@
-"use client";
+"use client"; // useState/useRouter chahiye, isliye yeh server component nahi ban sakta
 
 import { useState, type SubmitEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -8,6 +8,7 @@ export default function HomePage() {
   const [slugInput, setSlugInput] = useState("");
 
   function createNew(): void {
+    // poora UUID nahi chahiye, sirf itna unique ho ki URL mein short aur shareable lage
     const slug = crypto.randomUUID().slice(0, 8);
     router.push(`/doc/${slug}`);
   }
