@@ -2,8 +2,12 @@ import { z } from "zod";
 import { opIdSchema, opSchema } from "./op.js";
 import { rgaSnapshotNodeSchema } from "./rgaSnapshot.js";
 
-const docId = z.string().min(1);
-const replicaId = z.string().min(1);
+// upper bounds hardening ke liye hain (BUG-009) — kisi bhi legitimate use case
+// se kaafi zyada generous hain, bas ek malicious/broken client ko arbitrarily
+// bade strings/batches bhejne se rokte hain (sabhi clients ko broadcast hote
+// hain aur Postgres mein persist hote hain)
+const docId = z.string().min(1).max(200);
+const replicaId = z.string().min(1).max(200);
 const seq = z.number().int().nonnegative();
 
 const selectionSchema = z
@@ -17,8 +21,8 @@ const selectionSchema = z
 const awarenessFields = {
   cursor: z.number().int().nonnegative().nullable().optional(),
   selection: selectionSchema.optional(),
-  name: z.string().optional(),
-  color: z.string().optional(),
+  name: z.string().max(100).optional(),
+  color: z.string().max(32).optional(),
 };
 
 // ---- client -> server ----
@@ -33,7 +37,7 @@ export const joinMessageSchema = z.object({
 export const opMessageSchema = z.object({
   type: z.literal("op"),
   docId,
-  ops: z.array(opSchema).min(1),
+  ops: z.array(opSchema).min(1).max(2000),
 });
 
 export const presenceMessageSchema = z.object({

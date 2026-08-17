@@ -6,7 +6,13 @@ import { parseClientMessage, type ErrorMessage, type ServerMessage } from "@ysyn
 import { RoomManager, type RoomManagerOptions } from "./roomManager.js";
 import { logger, errorMeta } from "./logger.js";
 
-export type CreateServerOptions = RoomManagerOptions;
+export interface CreateServerOptions extends RoomManagerOptions {
+  // unset/empty rehta hai toh origin check disabled — koi breaking change
+  // nahi bina opt-in ke (BUG-008)
+  allowedOrigins?: string[];
+}
+
+const MAX_WS_PAYLOAD_BYTES = 1_048_576; // 1 MiB — realistic edit batches se kaafi upar, phir bhi bounded (BUG-007)
 
 export interface YSyncServer {
   httpServer: http.Server;
@@ -35,7 +41,23 @@ export function createServer(options: CreateServerOptions): YSyncServer {
   });
 
   const httpServer = http.createServer(app);
-  const wss = new WebSocketServer({ server: httpServer });
+  const allowedOrigins = options.allowedOrigins;
+  const wss = new WebSocketServer({
+    server: httpServer,
+    maxPayload: MAX_WS_PAYLOAD_BYTES,
+    // allowedOrigins configured na ho toh sab origins allow karo — sirf
+    // opt-in hone pe hi enforce hota hai
+    verifyClient: allowedOrigins?.length
+      ? (info, callback) => {
+          if (info.origin && allowedOrigins.includes(info.origin)) {
+            callback(true);
+            return;
+          }
+          logger.warn("rejected ws connection: origin not allowed", { origin: info.origin || "(missing)" });
+          callback(false, 403, "origin not allowed");
+        }
+      : undefined,
+  });
   const socketState = new WeakMap<WebSocket, SocketState>();
 
   async function dispatchMessage(connectionId: string, socket: WebSocket, raw: string): Promise<void> {
@@ -119,7 +141,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     }
     if (message.type === "leave") {
       logger.info("leave received", { connectionId, docId: state.docId, replicaId: state.replicaId });
-      await roomManager.leave(state.docId, state.replicaId);
+      await roomManager.leave(state.docId, state.replicaId, socket);
       socketState.delete(socket);
     }
   }
@@ -153,7 +175,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       logger.info("ws connection closed", { connectionId, docId: state?.docId, replicaId: state?.replicaId });
       if (state) {
         // yeh .catch zaroori hai — close event ke andar promise reject hone do toh unhandled rejection ban jayega
-        roomManager.leave(state.docId, state.replicaId).catch((err: unknown) => {
+        roomManager.leave(state.docId, state.replicaId, socket).catch((err: unknown) => {
           logger.error("roomManager.leave failed on close", {
             connectionId,
             docId: state.docId,

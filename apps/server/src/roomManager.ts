@@ -141,7 +141,16 @@ export class RoomManager {
   ): Promise<{ kind: "sync"; seq: number; ops: Op[] } | { kind: "snapshot"; seq: number; state: ReturnType<Room["snapshot"]> }> {
     logger.debug("roomManager join start", { docId, replicaId, sinceSeq });
     const room = await this.getOrCreateRoom(docId);
-    room.join(replicaId, socket);
+    const previousSocket = room.join(replicaId, socket);
+    if (previousSocket && previousSocket !== socket && previousSocket.readyState === previousSocket.OPEN) {
+      // purana socket isi replicaId se pehle se joined tha (duplicate tab, ya
+      // reconnect jiska close event abhi tak nahi aaya) — close kar do taaki
+      // woh orphaned/unreachable na reh jaaye. Room.leave ka
+      // identity check (room.ts) yeh confirm karta hai ki iska apna close
+      // event naye socket ko evict na kare.
+      logger.warn("closing previous socket for replicaId (replaced by a new connection)", { docId, replicaId });
+      previousSocket.close(4000, "replaced by a newer connection for this replicaId");
+    }
     logger.info("client added", { docId, replicaId, clientCount: room.replicaIds().length });
     const entry = this.rooms.get(docId);
     if (entry) entry.emptySince = null;
@@ -155,9 +164,9 @@ export class RoomManager {
     return result;
   }
 
-  async leave(docId: string, replicaId: string): Promise<void> {
+  async leave(docId: string, replicaId: string, socket?: WebSocket): Promise<void> {
     const entry = this.rooms.get(docId);
-    entry?.room.leave(replicaId);
+    entry?.room.leave(replicaId, socket);
     logger.info("client removed", { docId, replicaId, clientCount: entry?.room.replicaIds().length ?? 0 });
     if (entry?.room.isEmpty()) {
       entry.emptySince = Date.now();
@@ -364,11 +373,16 @@ export class RoomManager {
       if (entry.room.isEmpty()) {
         entry.emptySince ??= Date.now();
         // idle timeout paar ho gaya toh room ka in-memory state hata do — koi client aayega toh
-        // getOrCreateRoom phir se Postgres se load kar lega, data loss nahi hai
+        // getOrCreateRoom phir se Postgres se load kar lega, data loss nahi hai.
+        // clearInterval/delete dono unsubscribe safal hone ke *baad* hi karo
+        // — pehle karte toh ek unsubscribe fail hone pe (outer catch
+        // pakad leta hai, retry nahi hota) sweepTimer already dead ho chuka
+        // hota, aur yeh room hamesha ke liye stale reh jaata, kabhi evict ya
+        // retry nahi hota.
         if (Date.now() - entry.emptySince >= this.idleTimeoutMs) {
-          clearInterval(entry.sweepTimer);
           await this.pubSubBus.unsubscribe(docChannel(docId));
           await this.pubSubBus.unsubscribe(presenceChannel(docId));
+          clearInterval(entry.sweepTimer);
           this.rooms.delete(docId);
           logger.info("room evicted (idle timeout)", { docId, roomCount: this.rooms.size });
         }
