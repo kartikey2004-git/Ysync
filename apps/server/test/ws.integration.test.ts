@@ -18,7 +18,7 @@ afterEach(async () => {
   server = undefined;
 });
 
-async function startServer(): Promise<{ url: string }> {
+async function startServer(options?: { allowedOrigins?: string[] }): Promise<{ url: string }> {
   server = createServer({
     pubSubBus: new InMemoryPubSubBus(),
     presenceStore: new InMemoryPresenceStore(),
@@ -26,15 +26,16 @@ async function startServer(): Promise<{ url: string }> {
     persistenceStore: new InMemoryPersistenceStore(),
     sweepIntervalMs: 60_000,
     idleTimeoutMs: 60_000,
+    allowedOrigins: options?.allowedOrigins,
   });
   await new Promise<void>((resolve) => server?.httpServer.listen(0, resolve));
   const address = server.httpServer.address() as AddressInfo;
   return { url: `ws://127.0.0.1:${address.port}` };
 }
 
-function connect(url: string): Promise<WebSocket> {
+function connect(url: string, wsOptions?: WebSocket.ClientOptions): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(url, wsOptions);
     socket.once("open", () => resolve(socket));
     socket.once("error", reject);
   });
@@ -133,6 +134,62 @@ describe("WS integration (single instance, real sockets)", () => {
     const message = await errorPromise;
 
     expect(message.type).toBe("error");
+    alice.close();
+  });
+
+  test("a second join with the same replicaId closes the old socket, and the new one stays registered (BUG-005)", async () => {
+    const { url } = await startServer();
+    const first = await connect(url);
+    await joinAndAwaitCatchUp(first, "doc-1", "alice");
+
+    const firstClosePromise = new Promise<number>((resolve) => first.once("close", (code) => resolve(code)));
+    const second = await connect(url);
+    await joinAndAwaitCatchUp(second, "doc-1", "alice");
+
+    // pehle socket ka apna close event race karta hai — yeh exactly wahi race hai jo
+    // Room.leave ka identity check (room.ts) guard karta hai, taaki naya socket evict na ho
+    expect(await firstClosePromise).toBe(4000);
+
+    const bob = await connect(url);
+    await joinAndAwaitCatchUp(bob, "doc-1", "bob");
+
+    const secondBroadcast = nextMessage(second);
+    send(bob, {
+      type: "op",
+      docId: "doc-1",
+      ops: [{ type: "insert", id: { counter: 1, replicaId: "bob" }, originId: null, value: "h" }],
+    });
+    await expect(secondBroadcast).resolves.toMatchObject({ type: "broadcast-op" });
+
+    second.close();
+    bob.close();
+  });
+
+  test("oversized payloads close the connection instead of being accepted (BUG-007)", async () => {
+    const { url } = await startServer();
+    const alice = await connect(url);
+
+    const closePromise = new Promise<number>((resolve) => alice.once("close", (code) => resolve(code)));
+    // MAX_WS_PAYLOAD_BYTES (1 MiB) se kaafi upar
+    alice.send(JSON.stringify({ type: "join", docId: "d".repeat(2_000_000), replicaId: "alice", sinceSeq: 0 }));
+
+    expect(await closePromise).toBe(1009); // "Message Too Big"
+  });
+
+  test("a disallowed origin is rejected once allowedOrigins is configured (BUG-008)", async () => {
+    const { url } = await startServer({ allowedOrigins: ["https://allowed.example"] });
+    await expect(connect(url, { origin: "https://evil.example" })).rejects.toThrow();
+  });
+
+  test("an allowed origin still connects once allowedOrigins is configured (BUG-008)", async () => {
+    const { url } = await startServer({ allowedOrigins: ["https://allowed.example"] });
+    const alice = await connect(url, { origin: "https://allowed.example" });
+    alice.close();
+  });
+
+  test("origin checking is disabled by default (no allowedOrigins configured)", async () => {
+    const { url } = await startServer();
+    const alice = await connect(url, { origin: "https://anything.example" });
     alice.close();
   });
 });

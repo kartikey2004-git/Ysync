@@ -88,6 +88,25 @@ describe("Room", () => {
     expect(bob.sent).toHaveLength(1);
   });
 
+  test("join returns the previous socket for a reused replicaId, and leave only removes a matching socket (BUG-005)", () => {
+    const room = new Room("doc-1");
+    const first = fakeSocket();
+    const second = fakeSocket();
+
+    expect(room.join("alice", first.socket)).toBeNull();
+    expect(room.join("alice", second.socket)).toBe(first.socket);
+    expect(room.hasSocket("alice")).toBe(true);
+
+    // purane (replaced) socket ke apne close handler se aane wala leave(replicaId, first.socket)
+    // ko naya (second) socket evict nahi karna chahiye — identity match nahi hai
+    room.leave("alice", first.socket);
+    expect(room.hasSocket("alice")).toBe(true);
+
+    // asli owner (second) khud leave kare toh delete hona chahiye
+    room.leave("alice", second.socket);
+    expect(room.hasSocket("alice")).toBe(false);
+  });
+
   test("broadcast skips sockets that are no longer OPEN", () => {
     const room = new Room("doc-1");
     const alice = fakeSocket();

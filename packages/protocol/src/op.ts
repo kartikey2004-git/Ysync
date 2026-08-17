@@ -13,7 +13,9 @@ export const insertOpSchema = z.object({
   type: z.literal("insert"),
   id: opIdSchema,
   originId: opIdSchema.nullable(),
-  value: z.string(),
+  // normal typing produces one char per op (deltaToEdits.ts) — this cap is
+  // just a ceiling for a single-op paste-as-one-string case (BUG-009)
+  value: z.string().max(4000),
   attrs: formatMarkSchema.optional(),
 });
 

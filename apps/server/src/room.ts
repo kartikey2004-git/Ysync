@@ -47,11 +47,21 @@ export class Room {
     return ops;
   }
 
-  join(replicaId: string, socket: WebSocket): void {
+  // Agar isi replicaId ke liye pehle se koi socket registered tha, use return
+  // karta hai — caller (RoomManager) usko close kar sakta hai taaki woh
+  // orphaned/unreachable na reh jaaye.
+  join(replicaId: string, socket: WebSocket): WebSocket | null {
+    const previous = this.sockets.get(replicaId) ?? null;
     this.sockets.set(replicaId, socket);
+    return previous;
   }
 
-  leave(replicaId: string): void {
+  // socket pass kiya gaya ho toh sirf tabhi delete karo jab woh abhi bhi
+  // isi replicaId ke against registered socket ho — warna ek replaced
+  // purane socket ka apna close event naye
+  // socket ko evict kar dega jo already isi replicaId ko le chuka hai.
+  leave(replicaId: string, socket?: WebSocket): void {
+    if (socket && this.sockets.get(replicaId) !== socket) return;
     this.sockets.delete(replicaId);
   }
 

@@ -98,6 +98,46 @@ describe("rejects malformed input", () => {
     expect(parseServerMessage(null).success).toBe(false);
   });
 
+  test("docId over the length cap is rejected (BUG-009)", () => {
+    const result = parseClientMessage({
+      type: "join",
+      docId: "d".repeat(201),
+      replicaId: "alice",
+      sinceSeq: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("presence name over the length cap is rejected (BUG-009)", () => {
+    const result = parseClientMessage({
+      type: "presence",
+      docId: "doc-1",
+      name: "n".repeat(101),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("an op batch over the size cap is rejected (BUG-009)", () => {
+    const ops = Array.from({ length: 2001 }, (_, i) => ({
+      type: "insert" as const,
+      id: { counter: i + 1, replicaId: "alice" },
+      originId: null,
+      value: "x",
+    }));
+    const result = parseClientMessage({ type: "op", docId: "doc-1", ops });
+    expect(result.success).toBe(false);
+  });
+
+  test("an insert op value over the length cap is rejected (BUG-009)", () => {
+    const result = opSchema.safeParse({
+      type: "insert",
+      id: opId,
+      originId: null,
+      value: "x".repeat(4001),
+    });
+    expect(result.success).toBe(false);
+  });
+
   test("individual message schemas reject cross-contaminated fields missing", () => {
     expect(joinMessageSchema.safeParse({ type: "join", docId: "d" }).success).toBe(false);
     expect(opMessageSchema.safeParse({ type: "op", docId: "d", ops: [] }).success).toBe(false); // ops khali nahi ho sakta

@@ -119,13 +119,25 @@ export class PrismaPersistenceStore implements PersistenceStore {
     try {
       // document.latestSeq aur Operation rows dono ek saath commit hone chahiye —
       // agar upsert ho gaya par rows nahi (ya ulta), toh room rehydrate hote waqt
-      // ya toh galat seq maan lega ya ops silently drop ho jayenge next load pe
+      // ya toh galat seq maan lega ya ops silently drop ho jayenge next load pe.
+      //
+      // latestSeq ko GREATEST se set karna zaroori hai, plain assignment se nahi
+      // — do concurrent appendOps calls (alag senders) Redis se seq N
+      // aur N+1 allocate kar sakte hain lekin unki independent transactions
+      // kisi bhi order mein commit ho sakti hain; agar N+1 pehle commit ho aur N
+      // baad mein, plain `update: { latestSeq: seq }` latestSeq ko N pe regress
+      // kar deta — GREATEST isse rok deta hai. updatedAt yahan explicitly set
+      // karna padta hai kyunki raw SQL Prisma ke `@updatedAt` auto-behavior ko
+      // bypass kar deta hai, aur us column ka koi DB-level default bhi nahi hai.
+      
       await this.prisma.$transaction([
-        this.prisma.document.upsert({
-          where: { id: docId },
-          create: { id: docId, latestSeq: seq },
-          update: { latestSeq: seq },
-        }),
+        this.prisma.$executeRaw`
+          INSERT INTO "Document" ("id", "latestSeq", "updatedAt")
+          VALUES (${docId}, ${seq}, now())
+          ON CONFLICT ("id") DO UPDATE
+          SET "latestSeq" = GREATEST("Document"."latestSeq", EXCLUDED."latestSeq"),
+              "updatedAt" = now()
+        `,
         this.prisma.operation.createMany({
           data: ops.map((op) => toRow(docId, seq, op)),
           skipDuplicates: true,
