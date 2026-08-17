@@ -5,8 +5,7 @@ concurrent edits from any number of replicas converge without a central
 lock, work fully offline, and reconcile with zero data loss on reconnect.
 
 The CRDT is an RGA (Replicated Growable Array) variant, implemented as a
-Timestamped Insertion (TI) List. For the algorithm itself, see
-[docs/README.md](./docs/README.md); for the system it runs inside (the
+Timestamped Insertion (TI) List. The system it runs inside (the
 WebSocket sync server, Postgres persistence, Redis fan-out, the Next.js
 client). 
 
