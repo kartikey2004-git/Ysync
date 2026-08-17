@@ -4,9 +4,9 @@ import dynamic from "next/dynamic";
 import { useDocument } from "@/lib/useDocument";
 import { PresenceList } from "./PresenceList";
 
-// Quill touches `document` at module-evaluation time, which crashes
-// Next.js's SSR pass even for a "use client" component — ssr:false keeps
-// it (and quill-delta) out of the server bundle entirely.
+// Quill module-evaluation ke waqt hi `document` ko touch kar leta hai, jisse
+// Next.js ka SSR pass crash ho jata hai, "use client" component hone ke bawajood —
+// ssr:false laga ke isko (aur quill-delta ko) server bundle se poori tarah bahar rakha hai
 const Editor = dynamic(() => import("./Editor").then((mod) => mod.Editor), { ssr: false });
 
 interface DocEditorProps {
@@ -28,7 +28,7 @@ export function DocEditor({ slug }: DocEditorProps) {
               type="checkbox"
               checked={snapshot.simulatedOffline}
               onChange={(event) => client?.setSimulatedOffline(event.target.checked)}
-              disabled={!client}
+              disabled={!client} // client abhi banna baaki hai (browser-only effect), tab tak toggle useless hai
             />
             Simulate offline
           </label>

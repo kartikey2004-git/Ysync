@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { formatMarkSchema, opIdSchema } from "./op.js";
 
-/** Mirrors @ysync/crdt's `RgaSnapshotNode`. */
+// @ysync/crdt ke RgaSnapshotNode ko mirror karta hai
 export const rgaSnapshotNodeSchema = z.object({
   id: opIdSchema,
   originId: opIdSchema.nullable(),

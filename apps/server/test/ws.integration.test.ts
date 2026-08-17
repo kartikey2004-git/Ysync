@@ -56,6 +56,9 @@ async function joinAndAwaitCatchUp(socket: WebSocket, docId: string, replicaId: 
   return snapshotPromise;
 }
 
+// Real server ko real WebSocket (loopback, ephemeral port) pe chalate hain,
+// stores in-memory wale laga ke — poora wire protocol end-to-end test hota hai,
+// bina Redis ya Postgres ke.
 describe("WS integration (single instance, real sockets)", () => {
   test("join on a brand-new room returns an empty incremental sync (no history to fall back on)", async () => {
     const { url } = await startServer();

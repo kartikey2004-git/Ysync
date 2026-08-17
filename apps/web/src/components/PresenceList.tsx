@@ -12,6 +12,8 @@ function dotStyle(color: string): CSSProperties {
 }
 
 export function PresenceList({ snapshot }: PresenceListProps) {
+  // snapshot.name local IndexedDB se aata hai, isliye neeche wala "(you)" entry
+  // WS round trip complete hone se pehle bhi dikh jayega — server se koi lena dena nahi
   return (
     <div className="presence-list">
       {snapshot.name && (

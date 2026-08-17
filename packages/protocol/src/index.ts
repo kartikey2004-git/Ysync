@@ -1,3 +1,4 @@
+// apps/web aur apps/server ke beech WS pe jo bhi value jaati hai uske liye zod schemas + inferred types
 export { opIdSchema, formatMarkSchema, insertOpSchema, deleteOpSchema, opSchema } from "./op.js";
 export type { OpIdShape, FormatMarkShape, InsertOpShape, DeleteOpShape, OpShape } from "./op.js";
 

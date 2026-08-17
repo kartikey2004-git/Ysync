@@ -13,18 +13,20 @@
     "benchmark:latency": "tsx scripts/loadTest.ts"
   },
   "dependencies": {
-    "@ysync/database": "0.1.0",
     "@ysync/crdt": "0.1.0",
+    "@ysync/database": "0.1.0",
     "@ysync/protocol": "0.1.0",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "tsx": "^4.19.1",
+    "winston": "^3.19.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/ws": "^8.5.12",
     "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
+    "vitest": "^2.0.5",
+    "winston-transport": "^4.9.0"
   }
 }

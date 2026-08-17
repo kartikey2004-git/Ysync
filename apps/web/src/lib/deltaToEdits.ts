@@ -1,16 +1,13 @@
-/**
- * Translates a Quill Delta into an ordered list of index-based edits
- * matching `@ysync/crdt`'s char-at-a-time `Rga` API.
- *
- * Pure and dependency-free on purpose (no Quill import) — see
- * docs/changes/phase-5-web-editor.md: this is the one piece of the editor
- * binding worth unit testing directly.
- *
- * Rich-text `attributes` are intentionally dropped (see plan.md's Phase 5
- * note on packages/crdt's marker-node bug) — this phase is plain text only.
- * Non-string ("embed") inserts are skipped but still advance the cursor by
- * one unit, since Quill's delta still counts them as a single position.
- */
+// Quill Delta ko index-based edits ki ordered list mein badalta hai,
+// @ysync/crdt ke char-at-a-time Rga API ke hisab se.
+//
+// Jaan-boojh kar pure aur dependency-free rakha hai (Quill import nahi hai) —
+// editor binding ka yehi ek piece hai jo directly unit test karne layak hai.
+//
+// Rich-text attributes jaan-boojh kar drop kar rahe hain (packages/crdt mein
+// ek known marker-node bug hai) — abhi is phase mein plain text hi chalega.
+// Non-string ("embed") inserts skip ho jaate hain par cursor ek unit aage
+// badha dete hain, kyunki Quill ke delta mein woh bhi ek position ginte hain.
 
 export interface DeltaOp {
   insert?: string | Record<string, unknown>;
@@ -44,12 +41,12 @@ export function deltaToEdits(delta: QuillDelta): Edit[] {
     }
 
     if (op.insert !== undefined) {
-      cursor += 1; // embed — out of scope, but still occupies one position
+      cursor += 1; // embed hai — hum handle nahi karte, par position toh occupy karta hi hai
       continue;
     }
 
     if (typeof op.delete === "number") {
-      // each delete collapses the position, so the index never advances
+      // har delete se position collapse ho jaati hai, isliye index kabhi aage nahi badhta
       for (let i = 0; i < op.delete; i++) {
         edits.push({ kind: "delete", index: cursor });
       }

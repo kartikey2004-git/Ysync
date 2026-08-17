@@ -121,9 +121,9 @@ describe("replication", () => {
     const first = alice.localInsert(0, "a");
     const second = alice.localInsert(1, "b");
 
-    // deliver out of causal order
+    // jaan-boojh kar causal order todh ke bhej rahe hain
     bob.apply(second);
-    expect(bob.read()).toEqual(""); // buffered, origin not seen yet
+    expect(bob.read()).toEqual(""); // origin abhi tak nahi aaya, isliye buffer mein pada hai
     bob.apply(first);
     expect(bob.read()).toEqual("ab");
   });
@@ -148,7 +148,7 @@ describe("replication", () => {
     const bob = Rga.fromSnapshot(alice.toSnapshot(), "bob");
     const carol = Rga.fromSnapshot(alice.toSnapshot(), "carol");
 
-    // both bob and carol concurrently insert right after "q"
+    // bob aur carol dono concurrently "q" ke baad insert kar rahe hain
     const bobOp = bob.localInsert(1, "b");
     const carolOp = carol.localInsert(1, "c");
 
@@ -178,13 +178,13 @@ describe("snapshot + tombstone compaction", () => {
     rga.localInsert(0, "a");
     rga.localInsert(1, "b");
     rga.localInsert(2, "c");
-    rga.localDelete(1); // tombstone "b"
+    rga.localDelete(1); // "b" ko tombstone kar do
 
     rga.compactTombstones();
     expect(rga.read()).toEqual("ac");
 
-    // a future insert anchored after the (now-compacted) tombstone must
-    // still land in the right place.
+    // ab (compacted) tombstone ke baad koi naya insert anchor ho toh bhi
+    // sahi jagah pe hi lagna chahiye
     rga.localInsert(1, "x");
     expect(rga.read()).toEqual("axc");
   });

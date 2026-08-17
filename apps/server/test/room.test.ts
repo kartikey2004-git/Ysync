@@ -26,6 +26,9 @@ function fakeSocket(): FakeSocket {
   };
 }
 
+// Room ka koi external dependency nahi hai, plain data structure hai — isliye
+// yeh pure unit tests hain, na Redis chahiye na Postgres na real socket,
+// bas fake send() se check kar lete hain kisko kya mila.
 describe("Room", () => {
   test("join/leave tracks connected sockets", () => {
     const room = new Room("doc-1");
@@ -88,7 +91,7 @@ describe("Room", () => {
   test("broadcast skips sockets that are no longer OPEN", () => {
     const room = new Room("doc-1");
     const alice = fakeSocket();
-    alice.setReadyState(3); // CLOSED
+    alice.setReadyState(3); // CLOSED — socket band ho chuka, isko message nahi bhejna
     room.join("alice", alice.socket);
 
     room.broadcast({ type: "presence-leave", docId: "doc-1", replicaId: "bob" });

@@ -1,11 +1,9 @@
 import type { PubSubBus } from "./PubSubBus.js";
 
-/**
- * Shared "wire" multiple `InMemoryPubSubBus` instances can be pointed at
- * to simulate several server processes talking to the same Redis, without
- * a real Redis. Each `InMemoryPubSubBus` only invokes handlers registered
- * on itself, matching how independent Redis client connections behave.
- */
+// Shared "wire" hai jispe multiple InMemoryPubSubBus instances point kar sakte hain,
+// taaki real Redis ke bina hi kai server processes ek Redis se baat karne wala scene
+// simulate ho jaye. Har InMemoryPubSubBus sirf apne pe registered handlers hi call karta hai,
+// bilkul waise jaise alag-alag Redis client connections behave karte hain.
 export class InMemoryBroker {
   private readonly subscribers = new Map<string, Set<(message: string) => void>>();
 
@@ -55,6 +53,7 @@ export class InMemoryPubSubBus implements PubSubBus {
   }
 
   async close(): Promise<void> {
+    // sirf apne handlers ko clear karo, broker shared hai toh dusre bus instances ko touch mat karo
     for (const [channel, handler] of this.handlers) {
       this.broker.unsubscribe(channel, handler);
     }

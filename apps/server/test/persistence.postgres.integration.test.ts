@@ -28,11 +28,9 @@ function insertOp(
   return { type: "insert", id: { counter, replicaId }, originId, value };
 }
 
-/**
- * Exercises the real Prisma/Postgres-backed adapter, as the counterpart to
- * persistence.inMemory.test.ts. Skips (rather than fails) when no Postgres
- * is reachable at DATABASE_URL — see docs/changes/phase-4-persistence.md.
- */
+// Real Prisma/Postgres wale adapter ko test karta hai, persistence.inMemory.test.ts
+// ka counterpart hai. Agar DATABASE_URL pe Postgres reachable nahi hai toh
+// fail nahi, skip karta hai.
 describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Postgres at DATABASE_URL)", () => {
   test("appendOps then load() round-trips through real Postgres", async () => {
     const store = new PrismaPersistenceStore(DATABASE_URL);

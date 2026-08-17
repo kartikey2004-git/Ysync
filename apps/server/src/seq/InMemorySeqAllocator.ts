@@ -1,6 +1,6 @@
 import type { SeqAllocator } from "./SeqAllocator.js";
 
-/** Shared counter multiple `InMemorySeqAllocator`s can point at to simulate one Redis. */
+// yeh shared counter hai jispe multiple InMemorySeqAllocators point karke ek Redis simulate kar sakte hain
 export class InMemorySeqCounter {
   private readonly counters = new Map<string, number>();
 
@@ -31,6 +31,6 @@ export class InMemorySeqAllocator implements SeqAllocator {
   }
 
   async close(): Promise<void> {
-    // nothing to release
+    // yahan release karne ke liye kuch hai hi nahi, sirf interface satisfy karna hai
   }
 }

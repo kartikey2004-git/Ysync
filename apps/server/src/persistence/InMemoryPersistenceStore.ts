@@ -17,7 +17,7 @@ function emptyDoc(): DocState {
   return { latestSeq: 0, ops: [], seenOpIds: new Set(), snapshot: null };
 }
 
-/** Groups consecutive same-seq rows (insertion order is already seq-ordered) into batches. */
+// ek jaisi seq wali consecutive rows ko batch mein group karta hai (insertion order already seq-ordered hai)
 function groupBySeq(rows: StoredOp[]): OpBatch[] {
   const batches: OpBatch[] = [];
   for (const row of rows) {
@@ -31,7 +31,7 @@ function groupBySeq(rows: StoredOp[]): OpBatch[] {
   return batches;
 }
 
-/** In-memory stand-in for Document/Operation/Snapshot, same contract as PrismaPersistenceStore. */
+// Document/Operation/Snapshot ka in-memory version, same contract jo PrismaPersistenceStore follow karta hai
 export class InMemoryPersistenceStore implements PersistenceStore {
   private readonly docs = new Map<string, DocState>();
 
@@ -57,7 +57,7 @@ export class InMemoryPersistenceStore implements PersistenceStore {
 
     for (const op of ops) {
       const opIdKey = opIdKeyOf(op);
-      if (doc.seenOpIds.has(opIdKey)) continue; // emulates the (docId, opId) unique constraint + skipDuplicates
+      if (doc.seenOpIds.has(opIdKey)) continue; // same op dobara aaye toh duplicate save nahi karna — Postgres ke unique constraint + skipDuplicates jaisa hi
       doc.seenOpIds.add(opIdKey);
       doc.ops.push({ seq, op });
     }
@@ -70,6 +70,7 @@ export class InMemoryPersistenceStore implements PersistenceStore {
       this.docs.set(docId, doc);
     }
     doc.snapshot = { atSeq, state };
+    // snapshot le liya toh usse purane ops ab redundant hain, hata do warna list hamesha badhti rahegi
     doc.ops = doc.ops.filter((row) => row.seq > atSeq);
     doc.latestSeq = Math.max(doc.latestSeq, atSeq);
   }

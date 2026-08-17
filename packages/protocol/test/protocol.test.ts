@@ -19,7 +19,7 @@ import {
 import { parseClientMessage, parseServerMessage } from "../src/parse.js";
 import type { ClientMessage, ServerMessage } from "../src/index.js";
 
-/** Simulates the JSON round-trip a message actually takes over the wire. */
+// message wire pe jo JSON round-trip actually leta hai, wahi simulate karta hai
 function overTheWire<T>(value: T): unknown {
   return JSON.parse(JSON.stringify(value));
 }
@@ -45,7 +45,7 @@ describe("client message round-trips", () => {
       name: "Alice",
       color: "#ff0000",
     },
-    { type: "presence", docId: "doc-1" }, // all awareness fields optional
+    { type: "presence", docId: "doc-1" }, // awareness ke saare fields optional hain
     { type: "leave", docId: "doc-1" },
   ];
 
@@ -80,7 +80,7 @@ describe("server message round-trips", () => {
 
 describe("rejects malformed input", () => {
   test("missing required field", () => {
-    const result = parseClientMessage({ type: "join", docId: "doc-1" }); // missing replicaId/sinceSeq
+    const result = parseClientMessage({ type: "join", docId: "doc-1" }); // replicaId/sinceSeq missing hai
     expect(result.success).toBe(false);
   });
 
@@ -90,7 +90,7 @@ describe("rejects malformed input", () => {
   });
 
   test("op with wrong shape is rejected", () => {
-    expect(opSchema.safeParse({ type: "insert", id: opId }).success).toBe(false); // missing value
+    expect(opSchema.safeParse({ type: "insert", id: opId }).success).toBe(false); // value missing hai
   });
 
   test("non-object input", () => {
@@ -100,8 +100,8 @@ describe("rejects malformed input", () => {
 
   test("individual message schemas reject cross-contaminated fields missing", () => {
     expect(joinMessageSchema.safeParse({ type: "join", docId: "d" }).success).toBe(false);
-    expect(opMessageSchema.safeParse({ type: "op", docId: "d", ops: [] }).success).toBe(false); // ops must be non-empty
-    expect(presenceMessageSchema.safeParse({ type: "presence" }).success).toBe(false); // missing docId
+    expect(opMessageSchema.safeParse({ type: "op", docId: "d", ops: [] }).success).toBe(false); // ops khali nahi ho sakta
+    expect(presenceMessageSchema.safeParse({ type: "presence" }).success).toBe(false); // docId missing hai
     expect(leaveMessageSchema.safeParse({ type: "leave" }).success).toBe(false);
     expect(snapshotMessageSchema.safeParse({ type: "snapshot", docId: "d", seq: 0 }).success).toBe(false);
     expect(syncMessageSchema.safeParse({ type: "sync", docId: "d" }).success).toBe(false);

@@ -17,7 +17,7 @@ const actionArb = fc.record({
   positionSeed: fc.nat(),
 });
 
-/** Runs a replica's local action stream against its own Rga, returning the ops it produced. */
+// replica ke apne action stream ko uske Rga pe chalata hai, jo ops bane unhe return karta hai
 function runReplicaActions(rga: Rga, actions: ActionSpec[]): Op[] {
   const ops: Op[] = [];
   for (const action of actions) {
@@ -34,7 +34,7 @@ function runReplicaActions(rga: Rga, actions: ActionSpec[]): Op[] {
   return ops;
 }
 
-/** Deterministic seeded Fisher-Yates shuffle, so a failing case is reproducible from its seed. */
+// deterministic seeded Fisher-Yates shuffle hai, taaki koi failing case seed se hi reproduce ho jaaye
 function seededShuffle<T>(items: T[], seed: number): T[] {
   const out = items.slice();
   let s = seed || 1;
@@ -49,9 +49,9 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
 }
 
 describe("convergence (property-based)", () => {
-  // 3 replicas x 20-100 ops x 50 runs => several thousand ops exercised across
-  // this property's full execution, satisfying the "5,000+ out-of-order
-  // concurrent operations" convergence claim in system-design.md §9.1.
+  // 3 replicas x 20-100 ops x 50 runs => poore property execution mein kai
+  // hazaar ops chal jaate hain, "5,000+ out-of-order concurrent operations"
+  // wala convergence target isi se satisfy hota hai.
   test("replicas converge to the same document regardless of delivery order", () => {
     fc.assert(
       fc.property(
@@ -69,13 +69,13 @@ describe("convergence (property-based)", () => {
           const opsC = runReplicaActions(carol, actionsC);
           const allOps = [...opsA, ...opsB, ...opsC];
 
-          // alice's own view: apply everyone else's ops on top of her own local state
+          // alice ka apna view: baaki sabke ops apne local state ke upar apply karo
           alice.applyAll(opsB);
           alice.applyAll(opsC);
 
-          // two independent observers replaying the full merged history in
-          // two different random (fully out-of-order, including
-          // out-of-order *within* a single replica's own stream) sequences
+          // do independent observers poori merged history do alag random order
+          // mein replay kar rahe hain (fully out-of-order, ek replica ke apne
+          // stream ke andar bhi out-of-order)
           const observerOne = new Rga("observer-1");
           const observerTwo = new Rga("observer-2");
           observerOne.applyAll(seededShuffle(allOps, seed));
