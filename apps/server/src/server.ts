@@ -31,7 +31,7 @@ function sendError(socket: WebSocket, code: string, message: string): void {
 export function createServer(options: CreateServerOptions): YSyncServer {
   const roomManager = new RoomManager(options);
   const app = express();
-  app.get("/healthz", (_req, res) => {
+  app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
 
