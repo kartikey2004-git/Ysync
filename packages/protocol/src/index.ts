@@ -1,6 +1,6 @@
 // zod schemas + inferred types for every value that crosses the WS boundary between apps/web and apps/server
-export { opIdSchema, formatMarkSchema, insertOpSchema, deleteOpSchema, opSchema } from "./op.js";
-export type { OpIdShape, FormatMarkShape, InsertOpShape, DeleteOpShape, OpShape } from "./op.js";
+export { opIdSchema, formatMarkSchema, insertOpSchema, deleteOpSchema, formatOpSchema, opSchema } from "./op.js";
+export type { OpIdShape, FormatMarkShape, InsertOpShape, DeleteOpShape, FormatOpShape, OpShape } from "./op.js";
 
 export { rgaSnapshotNodeSchema } from "./rgaSnapshot.js";
 export type { RgaSnapshotNodeShape } from "./rgaSnapshot.js";

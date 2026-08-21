@@ -274,10 +274,13 @@ export class DocumentClient {
     if (edits.length === 0) return;
     const ops: Op[] = [];
     for (const edit of edits) {
-      const op = edit.kind === "insert"
-        ? this.rga.localInsert(edit.index, edit.value)
-        : this.rga.localDelete(edit.index);
-      ops.push(op);
+      if (edit.kind === "insert") {
+        ops.push(this.rga.localInsert(edit.index, edit.value, edit.attrs));
+      } else if (edit.kind === "delete") {
+        ops.push(this.rga.localDelete(edit.index));
+      } else {
+        ops.push(...this.rga.localFormat(edit.index, edit.length, edit.attrs));
+      }
     }
     for (const op of ops) {
       const opId = opIdKeyOf(op);
