@@ -13,7 +13,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // Generated OpenNext/Cloudflare worker bundle — not source, was being
-    // linted as if it were (BUG-011).
+    // linted as if it were .
     ".open-next/**",
   ]),
 ]);

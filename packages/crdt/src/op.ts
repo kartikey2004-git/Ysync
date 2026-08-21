@@ -16,7 +16,7 @@ export interface DeleteOp {
 
 export type Op = InsertOp | DeleteOp;
 
-// op ki identity: insert ho toh uski apni id, delete ho toh target id
+// an op's identity: its own id for an insert, the target's id for a delete
 export function opIdOf(op: Op): OpId {
   return op.type === "insert" ? op.id : op.targetId;
 }

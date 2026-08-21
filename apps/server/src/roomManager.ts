@@ -30,13 +30,13 @@ export interface RoomManagerOptions {
   presenceStore: PresenceStore;
   seqAllocator: SeqAllocator;
   persistenceStore: PersistenceStore;
-  // presence entry bina refresh ke kitni der tak valid rahega
+  // how long a presence entry stays valid without a refresh
   presenceTtlMs?: number;
-  // room ka presence sweep / idle-eviction / snapshot check kitni der mein chalta hai
+  // how often a room's presence sweep / idle-eviction / snapshot check runs
   sweepIntervalMs?: number;
-  // room khali rehne ke baad kitni der mein uska in-memory state hata denge
+  // how long a room stays empty before its in-memory state gets dropped
   idleTimeoutMs?: number;
-  // itne ops ho jaayein last snapshot ke baad toh naya snapshot + GC trigger ho jata hai
+  // this many ops since the last snapshot triggers a new snapshot + GC
   snapshotOpThreshold?: number;
 }
 
@@ -48,11 +48,7 @@ function presenceChannel(docId: string): string {
   return `presence:${docId}`;
 }
 
-// Is process ke saare active Room isi class ke through control hote hain,
-// cross-process fan-out aur persistence bhi yahin se manage hoti hai. Har
-// published message mein apna processId bhejte hain taaki subscriber side
-// pe apna hi echo skip kar sakein — local broadcast toh synchronously ho
-// hi chuka hota hai, pub/sub round trip sirf dusre Cloud Run instances ke liye hai.
+// Every active Room in this process is controlled through this class, and it also manages cross-process fan-out and persistence. Every published message carries its own processId so the subscriber side can skip its own echo — the local broadcast has already happened synchronously, the pub/sub round trip is only for other Cloud Run instances.
 export class RoomManager {
   private readonly rooms = new Map<string, RoomEntry>();
   private readonly processId = randomUUID();
@@ -77,7 +73,7 @@ export class RoomManager {
   }
 
   async getOrCreateRoom(docId: string): Promise<Room> {
-    // room already memory mein hai toh dobara Postgres se load karne ki zaroorat nahi
+    // already in memory, no need to reload from Postgres
     const existing = this.rooms.get(docId);
     if (existing) {
       logger.debug("room reused", { docId, roomCount: this.rooms.size });
@@ -88,7 +84,7 @@ export class RoomManager {
     try {
       ({ snapshot, snapshotSeq, ops, latestSeq } = await this.persistenceStore.load(docId));
     } catch (err) {
-      // Postgres down hai ya query fail hui — yahan crash nahi karna, error ko wrap karke upar bhej do
+      // Postgres is down or the query failed — don't crash here, wrap the error and let it propagate
       logger.error("persistenceStore.load failed", { docId, error: errorMeta(err) });
       throw new Error(`failed to load document ${docId} from persistence`);
     }
@@ -118,8 +114,7 @@ export class RoomManager {
         void this.handleRemotePresence(docId, raw);
       });
     } catch (err) {
-      // Redis subscribe fail ho gaya toh room ko half-created chhod ke rakhna galat hai —
-      // sweepTimer aur map entry dono clean kar do, warna leak ho jayega
+      // subscribe failing means leaving the room half-created is wrong — clean up both the sweepTimer and the map entry, or it leaks
       logger.error("pubSubBus.subscribe failed", { docId, error: errorMeta(err) });
       clearInterval(entry.sweepTimer);
       this.rooms.delete(docId);
@@ -130,9 +125,7 @@ export class RoomManager {
     return room;
   }
 
-  // Socket ko room mein register karta hai aur decide karta hai kaise catch-up bhejein:
-  // agar in-memory op log mein sinceSeq ke baad ka sab kuch hai toh incremental sync,
-  // warna poora snapshot bhej do fallback ke taur pe.
+  // Registers the socket on the room and decides how to send catch-up: incremental sync if the in-memory op log covers everything after sinceSeq, otherwise a full snapshot as a fallback.
   async join(
     docId: string,
     replicaId: string,
@@ -143,11 +136,7 @@ export class RoomManager {
     const room = await this.getOrCreateRoom(docId);
     const previousSocket = room.join(replicaId, socket);
     if (previousSocket && previousSocket !== socket && previousSocket.readyState === previousSocket.OPEN) {
-      // purana socket isi replicaId se pehle se joined tha (duplicate tab, ya
-      // reconnect jiska close event abhi tak nahi aaya) — close kar do taaki
-      // woh orphaned/unreachable na reh jaaye. Room.leave ka
-      // identity check (room.ts) yeh confirm karta hai ki iska apna close
-      // event naye socket ko evict na kare.
+      // a previous socket was already joined under this replicaId (duplicate tab, or a reconnect whose close event hasn't arrived yet) — close it so it doesn't end up orphaned/unreachable. Room.leave's identity check (room.ts) makes sure this socket's own close event won't evict the new one that just took over.
       logger.warn("closing previous socket for replicaId (replaced by a new connection)", { docId, replicaId });
       previousSocket.close(4000, "replaced by a newer connection for this replicaId");
     }
@@ -164,6 +153,7 @@ export class RoomManager {
     return result;
   }
 
+  // emptySince gets set here, and tick() checks it against idleTimeoutMs — that's what decides when a room gets evicted (no cross-process signal needed)
   async leave(docId: string, replicaId: string, socket?: WebSocket): Promise<void> {
     const entry = this.rooms.get(docId);
     entry?.room.leave(replicaId, socket);
@@ -183,8 +173,7 @@ export class RoomManager {
     try {
       seq = await this.seqAllocator.next(docId);
     } catch (err) {
-      // Redis down hai toh seq allocate nahi kar sakte — op ko silently drop karne se
-      // achha hai client ko bata do ki retry karo
+      // Redis is down, so a seq can't be allocated — better to tell the client to retry than to silently drop the op
       logger.error("seqAllocator.next failed", { docId, replicaId: senderReplicaId, error: errorMeta(err) });
       room.sendTo(senderReplicaId, {
         type: "error",
@@ -197,16 +186,14 @@ export class RoomManager {
     room.applyOps(ops, seq);
     logger.debug("operation applied to room", { docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
 
-    // pehle broadcast, phir persist — user ko turant apna edit dikhna chahiye,
-    // DB write ke latency ke liye usko rokna nahi hai
+    // broadcast first, persist second — the user needs to see their own edit immediately, it shouldn't wait on DB write latency
     room.broadcast({ type: "broadcast-op", docId, seq, ops }, senderReplicaId);
     const fanoutPayload: OpFanoutPayload = { originId: this.processId, seq, ops };
     try {
       await this.pubSubBus.publish(docChannel(docId), JSON.stringify(fanoutPayload));
       logger.debug("operation published", { docId, channel: docChannel(docId), seq, ...summarizeOpIds(opIds) });
     } catch (err) {
-      // publish fail hua toh bhi koi baat nahi — local clients ko broadcast already mil chuka hai,
-      // persistence bhi neeche try hogi. Sirf *doosre* instances ke clients ko yeh op agli resync tak nahi milega
+      // a failed publish is fine — local clients already got the broadcast, and persistence is tried below. Only *other* instances' clients miss this op until their next resync
       logger.error("pubSubBus.publish failed", { docId, replicaId: senderReplicaId, seq, error: errorMeta(err) });
     }
 
@@ -215,8 +202,7 @@ export class RoomManager {
       logger.info("operation persisted", { docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
       room.sendTo(senderReplicaId, { type: "ack", docId, seq, opIds: ops.map(opIdOf) });
     } catch (err) {
-      // Postgres save fail hua, lekin edit already broadcast ho chuka hai — data loss nahi hai,
-      // client ko bata do reconnect pe retry hoga (outbox se dobara aayega)
+      // the Postgres save failed, but the edit was already broadcast — no data loss, just tell the client it'll be retried on reconnect (it'll come back from the outbox)
       logger.error("failed to persist operation", {
         docId,
         replicaId: senderReplicaId,
@@ -239,11 +225,11 @@ export class RoomManager {
     try {
       await this.presenceStore.set(docId, entry, this.presenceTtlMs);
     } catch (err) {
-      // presence Redis mein save nahi hua toh broadcast bhi mat karo — stale/wrong state better nahi hai
+      // if presence didn't save to Redis, don't broadcast either — stale/wrong state isn't better
       logger.error("presenceStore.set failed", { docId, replicaId: senderReplicaId, error: errorMeta(err) });
       return;
     }
-    // info nahi, debug — har connected client se ~8s mein heartbeat aata hai, info level mein log bhar jaayega
+    // debug, not info — every connected client heartbeats roughly every 8s, info level would flood the logs
     logger.debug("presence update", { docId, replicaId: senderReplicaId });
 
     room.broadcast({ type: "presence-update", docId, ...entry }, senderReplicaId);
@@ -256,6 +242,7 @@ export class RoomManager {
     }
   }
 
+  // same local-broadcast + cross-process fan-out pattern as updatePresence, just for the leave case — other instances need to know too, or their clients keep seeing a stale cursor
   async removePresence(docId: string, replicaId: string): Promise<void> {
     try {
       await this.presenceStore.remove(docId, replicaId);
@@ -287,11 +274,11 @@ export class RoomManager {
   private async handleRemoteOp(docId: string, raw: string): Promise<void> {
     try {
       const payload = JSON.parse(raw) as OpFanoutPayload;
-      // yeh apna hi published message hai — already apply aur broadcast kar chuke hain, dobara mat karo
+      // this is our own published message — already applied and broadcast it, don't redo it
       if (payload.originId === this.processId) return;
 
       const entry = this.rooms.get(docId);
-      // is process pe koi local room nahi hai matlab koi local socket bhi nahi — kisko notify karein
+      // no local room on this process means no local sockets either — nobody to notify
       if (!entry) return;
       entry.room.applyOps(payload.ops, payload.seq);
       entry.room.broadcast({ type: "broadcast-op", docId, seq: payload.seq, ops: payload.ops });
@@ -302,13 +289,11 @@ export class RoomManager {
         originId: payload.originId,
       });
 
-      // fan-out se aaya hua op bhi hum best-effort persist karne ki koshish karte hain —
-      // originating process ne already save kiya hoga, (docId, opId) unique constraint hai
-      // isliye dobara insert karna safe hai, duplicate save nahi hoga
+      // best-effort persist for an op that arrived via fan-out too — the originating process should already have saved it, and the (docId, opId) unique constraint makes a repeat insert safe, it won't duplicate
       try {
         await this.persistenceStore.appendOps(docId, payload.seq, payload.ops);
       } catch (err) {
-        // fail ho bhi jaaye toh chalega — originating process pehle hi durability ka zimmedar hai
+        // fine if this fails — the originating process already owns durability for this op
         logger.debug("redundant appendOps from fan-out failed (expected if already persisted by origin)", {
           docId,
           seq: payload.seq,
@@ -323,7 +308,7 @@ export class RoomManager {
   private async handleRemotePresence(docId: string, raw: string): Promise<void> {
     try {
       const payload = JSON.parse(raw) as PresenceFanoutPayload;
-      // yahan bhi apna hi echo skip karna hai, presence wale flow mein bhi same rule
+      // same rule here: skip our own echo in the presence flow too
       if (payload.originId === this.processId) return;
 
       const entry = this.rooms.get(docId);
@@ -356,8 +341,7 @@ export class RoomManager {
     if (!entry) return;
 
     try {
-      // heartbeat TTL expire ho gaya matlab client bina clean leave bheje disconnect ho gaya —
-      // in replicaIds ko bhi presence-leave bhej ke saaf kar do
+      // a heartbeat TTL expiring means the client disconnected without sending a clean leave — clean these replicaIds up with a presence-leave too
       const expired = await this.presenceStore.sweep(docId);
       for (const replicaId of expired) {
         entry.room.broadcast({ type: "presence-leave", docId, replicaId });
@@ -365,20 +349,14 @@ export class RoomManager {
         await this.pubSubBus.publish(presenceChannel(docId), JSON.stringify(payload));
       }
 
-      // threshold cross ho gaya toh snapshot le lo, warna Operation table hamesha badhta rahega
+      // crossing the threshold triggers a snapshot, otherwise the Operation table just keeps growing forever
       if (entry.room.getOpsSinceSnapshot() >= this.snapshotOpThreshold) {
         await this.snapshotRoom(docId);
       }
 
       if (entry.room.isEmpty()) {
         entry.emptySince ??= Date.now();
-        // idle timeout paar ho gaya toh room ka in-memory state hata do — koi client aayega toh
-        // getOrCreateRoom phir se Postgres se load kar lega, data loss nahi hai.
-        // clearInterval/delete dono unsubscribe safal hone ke *baad* hi karo
-        // — pehle karte toh ek unsubscribe fail hone pe (outer catch
-        // pakad leta hai, retry nahi hota) sweepTimer already dead ho chuka
-        // hota, aur yeh room hamesha ke liye stale reh jaata, kabhi evict ya
-        // retry nahi hota.
+        // past the idle timeout, drop the room's in-memory state — if a client shows up later, getOrCreateRoom just reloads it from Postgres, no data loss. Only clearInterval/delete *after* both unsubscribes succeed — doing it before would mean that if one unsubscribe fails (the outer catch swallows it, no retry), the sweepTimer would already be dead and this room would stay stale forever, never evicted or retried.
         if (Date.now() - entry.emptySince >= this.idleTimeoutMs) {
           await this.pubSubBus.unsubscribe(docChannel(docId));
           await this.pubSubBus.unsubscribe(presenceChannel(docId));
@@ -390,8 +368,7 @@ export class RoomManager {
         entry.emptySince = null;
       }
     } catch (err) {
-      // yeh setInterval ke andar chalta hai, koi await nahi kar raha — isliye yahan se
-      // error throw hua toh sidha process crash, isliye try/catch mandatory hai
+      // this runs inside a setInterval with nothing awaiting it — a thrown error here would crash the process directly, so the try/catch is mandatory
       logger.error("tick failed", { docId, error: errorMeta(err) });
     }
   }

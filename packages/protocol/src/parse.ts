@@ -10,12 +10,12 @@ function toParseResult<T>(result: z.SafeParseReturnType<unknown, T>): ParseResul
   return { success: false, error: result.error.message };
 }
 
-// WS boundary paar karke server mein aane wala untrusted input validate karta hai — kabhi throw nahi karta
+// Validates untrusted input coming into the server across the WS boundary — never throws.
 export function parseClientMessage(raw: unknown): ParseResult<ClientMessage> {
   return toParseResult(clientMessageSchema.safeParse(raw));
 }
 
-// WS boundary paar karke client mein aane wala untrusted input validate karta hai — kabhi throw nahi karta
+// Validates untrusted input coming into the client across the WS boundary — never throws.
 export function parseServerMessage(raw: unknown): ParseResult<ServerMessage> {
   return toParseResult(serverMessageSchema.safeParse(raw));
 }

@@ -49,7 +49,7 @@ function fromRow(row: OperationRow): Op {
   return { type: "delete", targetId: id };
 }
 
-// ek jaisi seq wali consecutive rows batch mein group kar deta hai (query pehle se seq order mein hai)
+// groups consecutive rows with the same seq into a batch (the query is already seq-ordered)
 function groupBySeq(rows: OperationRow[]): OpBatch[] {
   const batches: OpBatch[] = [];
   for (const row of rows) {
@@ -64,7 +64,7 @@ function groupBySeq(rows: OperationRow[]): OpBatch[] {
   return batches;
 }
 
-// Real Postgres-backed PersistenceStore hai, @ysync/database ke through
+// Real Postgres-backed PersistenceStore, via @ysync/database.
 export class PrismaPersistenceStore implements PersistenceStore {
   private readonly prisma: PrismaClient;
 
@@ -78,12 +78,12 @@ export class PrismaPersistenceStore implements PersistenceStore {
     try {
       document = await this.prisma.document.findUnique({ where: { id: docId } });
     } catch (err) {
-      // yahan error ko swallow nahi karna — Postgres down hai toh caller ko pata chalna chahiye
+      // don't swallow this error — the caller needs to know Postgres is down
       logger.error("document lookup failed", { docId, error: errorMeta(err) });
       throw err;
     }
     logger.debug("document lookup", { docId, found: document !== null });
-    // naya docId hai, DB mein kabhi save hi nahi hua — khali document treat karo, error nahi
+    // a brand new docId that was never saved to the DB — treat it as an empty document, not an error
     if (!document) return { snapshot: [], snapshotSeq: 0, ops: [], latestSeq: 0 };
 
     let latestSnapshot;
@@ -96,7 +96,7 @@ export class PrismaPersistenceStore implements PersistenceStore {
       const snapshotSeq = latestSnapshot?.atSeq ?? 0;
       logger.debug("snapshot lookup", { docId, found: latestSnapshot !== null, snapshotSeq });
 
-      // snapshot ke baad ke ops hi chahiye — usse pehle wale toh snapshot mein already compact ho chuke hain
+      // only the ops after the snapshot are needed — anything before is already compacted into it
       opRows = await this.prisma.operation.findMany({
         where: { docId, seq: { gt: snapshotSeq } },
         orderBy: [{ seq: "asc" }, { id: "asc" }],
@@ -117,19 +117,10 @@ export class PrismaPersistenceStore implements PersistenceStore {
     const opIds = ops.map(opIdKeyOf);
     logger.debug("persisting operation", { docId, seq, ...summarizeOpIds(opIds) });
     try {
-      // document.latestSeq aur Operation rows dono ek saath commit hone chahiye —
-      // agar upsert ho gaya par rows nahi (ya ulta), toh room rehydrate hote waqt
-      // ya toh galat seq maan lega ya ops silently drop ho jayenge next load pe.
-      //
-      // latestSeq ko GREATEST se set karna zaroori hai, plain assignment se nahi
-      // — do concurrent appendOps calls (alag senders) Redis se seq N
-      // aur N+1 allocate kar sakte hain lekin unki independent transactions
-      // kisi bhi order mein commit ho sakti hain; agar N+1 pehle commit ho aur N
-      // baad mein, plain `update: { latestSeq: seq }` latestSeq ko N pe regress
-      // kar deta — GREATEST isse rok deta hai. updatedAt yahan explicitly set
-      // karna padta hai kyunki raw SQL Prisma ke `@updatedAt` auto-behavior ko
-      // bypass kar deta hai, aur us column ka koi DB-level default bhi nahi hai.
-      
+      // document.latestSeq and the Operation rows must commit together — if the upsert lands but the rows don't (or vice versa), a room rehydrating later either assumes the wrong seq or silently drops ops on the next load.
+
+      // latestSeq has to be set with GREATEST, not a plain assignment — two concurrent appendOps calls (different senders) can allocate seq N and N+1 from Redis but their independent transactions can commit in either order; if N+1 commits first and N commits after, a plain `update: { latestSeq: seq }` would regress latestSeq back to N — GREATEST prevents that. updatedAt has to be set explicitly here because the raw SQL bypasses Prisma's `@updatedAt` auto-behavior, and that column has no DB-level default either.
+
       await this.prisma.$transaction([
         this.prisma.$executeRaw`
           INSERT INTO "Document" ("id", "latestSeq", "updatedAt")
@@ -144,7 +135,7 @@ export class PrismaPersistenceStore implements PersistenceStore {
         }),
       ]);
     } catch (err) {
-      // yahan bhi throw karna zaroori hai — caller (roomManager) ko client ko PERSIST_FAILED bolna hai
+      // this has to throw too — the caller (roomManager) needs to tell the client PERSIST_FAILED
       logger.error("failed to persist operation", { docId, seq, ...summarizeOpIds(opIds), error: errorMeta(err) });
       throw err;
     }
@@ -154,9 +145,7 @@ export class PrismaPersistenceStore implements PersistenceStore {
   async writeSnapshot(docId: string, atSeq: number, state: RgaSnapshotNode[]): Promise<void> {
     logger.debug("persisting snapshot", { docId, atSeq, nodeCount: state.length });
     try {
-      // snapshot pehle land hona chahiye, tabhi purane ops delete karo — warna
-      // beech mein crash hua toh woh seq range ka data hamesha ke liye gaya,
-      // na snapshot bacha na raw ops
+      // the snapshot has to land first, only then delete the old ops — otherwise a crash in between loses that seq range's data entirely, neither the snapshot nor the raw ops survive
       await this.prisma.$transaction([
         this.prisma.snapshot.create({
           data: { docId, atSeq, state: state as unknown as Prisma.InputJsonValue },

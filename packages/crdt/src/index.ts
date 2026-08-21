@@ -1,4 +1,4 @@
-// package ka public surface hai — src/ mein baaki sab kuch CRDT implementation ke andar hi rehta hai
+// public surface of the package — everything else under src/ stays internal to the CRDT implementation
 export { compareOpId, opIdEquals, opIdToString, opIdFromString, type OpId } from "./opId.js";
 export type { FormatMark, RgaNode } from "./node.js";
 export type { Op, InsertOp, DeleteOp } from "./op.js";

@@ -36,7 +36,7 @@ describe("InMemoryPersistenceStore", () => {
     const op = insertOp(1, "alice", "h");
 
     await store.appendOps("doc-1", 1, [op]);
-    await store.appendOps("doc-1", 1, [op]); // jaise ki ek redundant fan-in retry hua ho
+    await store.appendOps("doc-1", 1, [op]); // as if a redundant fan-in retry happened
 
     const loaded = await store.load("doc-1");
     expect(loaded.ops).toEqual([{ seq: 1, ops: [op] }]);
@@ -59,7 +59,7 @@ describe("InMemoryPersistenceStore", () => {
     const loaded = await store.load("doc-1");
     expect(loaded.snapshot).toEqual(snapshotState);
     expect(loaded.snapshotSeq).toBe(1);
-    expect(loaded.ops).toEqual([{ seq: 2, ops: [opC] }]); // opA/opB hata diye gaye — snapshot ne cover kar liya inko
+    expect(loaded.ops).toEqual([{ seq: 2, ops: [opC] }]); // opA/opB are gone — the snapshot already covers them
     expect(loaded.latestSeq).toBe(2);
   });
 });

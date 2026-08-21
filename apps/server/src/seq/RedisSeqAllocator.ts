@@ -6,8 +6,7 @@ function seqKey(docId: string): string {
   return `doc:${docId}:seq`;
 }
 
-// Real Redis wala SeqAllocator — INCR atomic hota hai, isliye document ka
-// next seq nikalne ke liye yahi ek single source of truth hai jise har process share karta hai.
+// Real Redis-backed SeqAllocator — INCR is atomic, so this is the single source of truth for a document's next seq that every process shares.
 export class RedisSeqAllocator implements SeqAllocator {
   private readonly redis: Redis;
 
@@ -24,7 +23,7 @@ export class RedisSeqAllocator implements SeqAllocator {
   }
 
   async current(docId: string): Promise<number> {
-    // key kabhi bana hi nahi (koi op abhi tak nahi aaya) toh Redis null dega — us case mein 0 seq treat karo
+    // if the key was never created (no op has landed yet) Redis returns null — treat that as seq 0
     const value = await this.redis.get(seqKey(docId));
     return value ? Number(value) : 0;
   }

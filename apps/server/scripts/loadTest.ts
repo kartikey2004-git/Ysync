@@ -1,8 +1,8 @@
-// Load / propagation-latency benchmark 
+// Load / propagation-latency benchmark.
 
-// Real WS server spin karta hai (in-process, ephemeral port pe) aur usi document pe bahut saare concurrent real WebSocket clients connect karta hai. Har client baari-baari se ek op bhejta hai; baaki har connected client ka broadcast-op tak pahunchne ka time record hota hai. 
+// Spins up a real WS server (in-process, on an ephemeral port) and connects a large number of concurrent real WebSocket clients to the same document. Each client takes a turn sending an op; the time for every other connected client to receive the broadcast-op is recorded.
 
-// Aakhir mein p50 / p95 / max / avg print hota hai, sub - 20ms server - side propagation target ke against. Env vars: LOAD_TEST_CLIENTS (default 60), LOAD_TEST_ROUNDS (default 30), REDIS_URL (optional — reachable hai toh real Redis pub/sub bus use karega, warna in-memory wale pe fallback ho jayega aur report mein bata dega).
+// Prints p50 / p95 / max / avg at the end, against a sub-20ms server-side propagation target. Env vars: LOAD_TEST_CLIENTS (default 60), LOAD_TEST_ROUNDS (default 30), REDIS_URL (optional — uses the real Redis pub/sub bus if reachable, otherwise falls back to the in-memory one and says so in the report).
 
 import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
@@ -25,7 +25,7 @@ const REDIS_URL = process.env.REDIS_URL;
 async function isRedisReachable(url: string): Promise<boolean> {
   const client = new Redis(url, { lazyConnect: true, retryStrategy: () => null, connectTimeout: 500 });
   
-  // yahan error listener khali hai jaan-boojh kar Redis na milna expected outcome hai, crash nahi
+  // this error listener is intentionally empty — Redis being unreachable is an expected outcome here, not a crash
   client.on("error", () => {});
   try {
     await client.connect();
@@ -43,7 +43,7 @@ function connectClient(url: string, replicaId: string): Promise<WebSocket> {
     ws.once("open", () => {
       ws.send(JSON.stringify({ type: "join", docId: DOC_ID, replicaId, sinceSeq: 0 }));
     });
-    ws.once("message", () => resolve(ws)); // pehla message hamesha join ka reply hi hoga (sync/snapshot)
+    ws.once("message", () => resolve(ws)); // the first message is always the join reply (sync/snapshot)
     ws.once("error", reject);
   });
 }
@@ -103,7 +103,7 @@ async function main(): Promise<void> {
   const url = `ws://127.0.0.1:${address.port}`;
 
   console.log("YSync load/latency benchmark");
-  console.log("================================");
+  
   console.log(`pub/sub backend: ${useRedis ? "real Redis" : "in-memory (Redis not reachable/configured)"}`);
   console.log(`clients: ${CLIENT_COUNT}, rounds: ${ROUNDS}`);
 
@@ -139,10 +139,8 @@ async function main(): Promise<void> {
   console.log(`sub-20ms target at p95: ${p95 < 20 ? "MET" : "NOT MET"}`);
 
   for (const client of clients) client.close();
-  // har client close hone pe server side async `leave` trigger hota hai (presence
-  // hatana + pub/sub publish), aur yeh WS close event khud await nahi karta —
-  // in-flight publishes land hone ka thoda time do, warna neeche shared Redis
-  // connections band karne se woh beech mein hi kat jayenge
+
+  // each client closing triggers an async server-side `leave` (removing presence + a pub/sub publish), and the WS close event itself doesn't await that — give the in-flight publishes a moment to land, otherwise closing the shared Redis connections below would cut them off mid-flight
   await new Promise<void>((resolve) => setTimeout(resolve, 200));
 
   await server.roomManager.close();

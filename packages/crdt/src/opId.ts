@@ -1,10 +1,10 @@
-// (counter, replicaId) pair globally unique hote hain aur replicas ke beech totally order bhi ho sakte hain — isi liye op id ke liye safe hain
+// a (counter, replicaId) pair is globally unique and totally orderable across replicas — that's what makes it safe as an op id
 export interface OpId {
   counter: number;
   replicaId: string;
 }
 
-// counter primary sort key hai; replicaId sirf tab kaam aata hai jab do concurrent ops ka counter same ho
+// counter is the primary sort key; replicaId only matters as a tiebreaker when two concurrent ops share a counter
 export function compareOpId(a: OpId, b: OpId): number {
   if (a.counter !== b.counter) return a.counter - b.counter;
   if (a.replicaId === b.replicaId) return 0;

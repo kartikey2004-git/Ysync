@@ -26,9 +26,8 @@ function fakeSocket(): FakeSocket {
   };
 }
 
-// Room ka koi external dependency nahi hai, plain data structure hai — isliye
-// yeh pure unit tests hain, na Redis chahiye na Postgres na real socket,
-// bas fake send() se check kar lete hain kisko kya mila.
+// Room has no external dependencies, it's a plain data structure — so these are pure
+// unit tests, no Redis, no Postgres, no real socket needed, just a fake send() to check who got what.
 describe("Room", () => {
   test("join/leave tracks connected sockets", () => {
     const room = new Room("doc-1");
@@ -88,7 +87,7 @@ describe("Room", () => {
     expect(bob.sent).toHaveLength(1);
   });
 
-  test("join returns the previous socket for a reused replicaId, and leave only removes a matching socket (BUG-005)", () => {
+  test("join returns the previous socket for a reused replicaId, and leave only removes a matching socket", () => {
     const room = new Room("doc-1");
     const first = fakeSocket();
     const second = fakeSocket();
@@ -97,12 +96,12 @@ describe("Room", () => {
     expect(room.join("alice", second.socket)).toBe(first.socket);
     expect(room.hasSocket("alice")).toBe(true);
 
-    // purane (replaced) socket ke apne close handler se aane wala leave(replicaId, first.socket)
-    // ko naya (second) socket evict nahi karna chahiye — identity match nahi hai
+    // a leave(replicaId, first.socket) coming from the old (replaced) socket's own close
+    // handler shouldn't evict the new (second) socket — the identity doesn't match
     room.leave("alice", first.socket);
     expect(room.hasSocket("alice")).toBe(true);
 
-    // asli owner (second) khud leave kare toh delete hona chahiye
+    // the actual owner (second) leaving itself should delete it
     room.leave("alice", second.socket);
     expect(room.hasSocket("alice")).toBe(false);
   });
@@ -110,7 +109,7 @@ describe("Room", () => {
   test("broadcast skips sockets that are no longer OPEN", () => {
     const room = new Room("doc-1");
     const alice = fakeSocket();
-    alice.setReadyState(3); // CLOSED — socket band ho chuka, isko message nahi bhejna
+    alice.setReadyState(3); // CLOSED — the socket is closed, don't send it a message
     room.join("alice", alice.socket);
 
     room.broadcast({ type: "presence-leave", docId: "doc-1", replicaId: "bob" });

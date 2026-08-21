@@ -42,9 +42,8 @@ const DB_VERSION = 1;
 
 let dbPromise: Promise<IDBPDatabase<YSyncDB>> | null = null;
 
-// Lazy rakha hai — indexedDB ko sirf tab touch karta hai jab client-side code
-// se actually call ho, module load hote hi nahi — isliye SSR mein yeh file
-// import karna bhi safe hai, koi error nahi aayega.
+// Kept lazy — only touches indexedDB when client-side code actually calls it, not on
+// module load — so importing this file during SSR is safe and won't error.
 function getDb(): Promise<IDBPDatabase<YSyncDB>> {
   dbPromise ??= openDB<YSyncDB>(DB_NAME, DB_VERSION, {
     upgrade(db) {
@@ -82,7 +81,64 @@ export async function removeFromOutbox(docId: string, opId: string): Promise<voi
   await db.delete("outbox", [docId, opId]);
 }
 
-const NAMES = ["Otter", "Falcon", "Panda", "Lynx", "Heron", "Badger", "Osprey", "Marten"];
+const NAMES = [
+  "Iron Man",
+  "Captain America",
+  "Thor",
+  "Hulk",
+  "Black Widow",
+  "Hawkeye",
+  "Scarlet Witch",
+  "Vision",
+  "Falcon",
+  "Winter Soldier",
+  "War Machine",
+  "Spider-Man",
+  "Ant-Man",
+  "Wasp",
+  "Black Panther",
+  "Captain Marvel",
+  "Doctor Strange",
+  "Shang-Chi",
+  "She-Hulk",
+  "Ms. Marvel",
+  "Kate Bishop",
+  "Yelena Belova",
+  "Moon Knight",
+  "Mighty Thor",
+  "Star-Lord",
+  "Gamora",
+  "Nebula",
+  "Rocket",
+  "Groot",
+  "Drax",
+  "Mantis",
+  "Wong",
+  "Valkyrie",
+  "Okoye",
+  "Shuri",
+  "M'Baku",
+  "America Chavez",
+  "Cassie Lang",
+  "Ironheart",
+  "Wiccan",
+  "Speed",
+  "Thanos",
+  "Loki",
+  "Ultron",
+  "Kang",
+  "Baron Zemo",
+  "Red Skull",
+  "Killmonger",
+  "Hela",
+  "Taskmaster",
+  "Abomination",
+  "Ronan",
+  "Ego",
+  "Green Goblin",
+  "Doctor Octopus"
+];
+
 const COLORS = ["#e63946", "#2a9d8f", "#e9c46a", "#457b9d", "#f4a261", "#8338ec", "#06d6a0", "#ef476f"];
 
 function randomFrom<T>(items: T[]): T {
@@ -91,8 +147,8 @@ function randomFrom<T>(items: T[]): T {
 
 export async function getOrCreateReplica(docId: string): Promise<ReplicaRecord> {
   const db = await getDb();
-  // pehle se replica record hai toh wahi use karo — har reload pe naya replicaId nahi banana,
-  // warna server iska history purane replicaId se disconnect samajh lega
+  // reuse the existing replica record if there is one — don't generate a new replicaId
+  // on every reload, or the server would see it as disconnected from its old replicaId's history
   const existing = await db.get("replica", docId);
   if (existing) return existing;
 

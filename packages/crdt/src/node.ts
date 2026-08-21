@@ -1,14 +1,14 @@
 import type { OpId } from "./opId.js";
 
-// Peritext-style start/end marker node ka ek mark hai, jaise { bold: true }
+// a single mark on a Peritext-style start/end marker node, e.g. { bold: true }
 export type FormatMark = Record<string, true>;
 
 export interface RgaNode {
   id: OpId;
-  // insertion ke waqt ka left-neighbor id; null matlab "head pe insert karo"
+  // the left-neighbor id at insertion time; null means "insert at the head"
   originId: OpId | null;
   next: RgaNode | null;
-  // garbage-collect hone ke baad null ho jata hai (tombstone skeleton, compactTombstones dekho)
+  // becomes null once garbage-collected (tombstone skeleton, see compactTombstones)
   value: string | null;
   tombstone: boolean;
   attrs?: FormatMark;

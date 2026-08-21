@@ -10,8 +10,7 @@ function heartbeatKey(docId: string): string {
   return `presence:${docId}:heartbeat`;
 }
 
-// Redis-backed PresenceStore: ek hash hai replicaId -> JSON payload, aur ek
-// sorted set replicaId -> expiry timestamp, jisse sweep karte waqt stale entries dhoond ke hata sakein.
+// Redis-backed PresenceStore: a hash of replicaId -> JSON payload, and a sorted set of replicaId -> expiry timestamp, so sweeping can find stale entries and drop them.
 export class RedisPresenceStore implements PresenceStore {
   private readonly redis: Redis;
 
@@ -24,8 +23,7 @@ export class RedisPresenceStore implements PresenceStore {
   }
 
   async set(docId: string, entry: PresenceEntry, ttlMs: number): Promise<void> {
-    // data hash aur heartbeat sorted-set dono ek saath multi() se update karo,
-    // warna beech mein crash hua toh data hoga par expiry entry nahi (ya ulta)
+    // update the data hash and the heartbeat sorted-set together via multi() — otherwise a crash in between could leave data written but no expiry entry (or the reverse)
     await this.redis
       .multi()
       .hset(dataKey(docId), entry.replicaId, JSON.stringify(entry))
@@ -37,6 +35,7 @@ export class RedisPresenceStore implements PresenceStore {
     await this.redis.multi().hdel(dataKey(docId), replicaId).zrem(heartbeatKey(docId), replicaId).exec();
   }
 
+  // reads the heartbeat set first so expired-but-not-yet-swept replicaIds never leak back out through list(), even between sweep() runs
   async list(docId: string): Promise<PresenceEntry[]> {
     const liveReplicaIds = await this.redis.zrangebyscore(heartbeatKey(docId), Date.now(), "+inf");
     if (liveReplicaIds.length === 0) return [];
@@ -45,7 +44,7 @@ export class RedisPresenceStore implements PresenceStore {
   }
 
   async sweep(docId: string): Promise<string[]> {
-    // pehle dhoondo kaun expire hua, phir dono jagah se hatao — koi expired nahi mila toh Redis call skip
+    // find who expired first, then remove them from both places — skip the Redis call entirely if nobody expired
     const expired = await this.redis.zrangebyscore(heartbeatKey(docId), "-inf", Date.now());
     if (expired.length === 0) return [];
     await this.redis.multi().zrem(heartbeatKey(docId), ...expired).hdel(dataKey(docId), ...expired).exec();

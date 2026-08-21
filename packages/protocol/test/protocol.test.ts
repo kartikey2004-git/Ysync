@@ -19,13 +19,14 @@ import {
 import { parseClientMessage, parseServerMessage } from "../src/parse.js";
 import type { ClientMessage, ServerMessage } from "../src/index.js";
 
-// message wire pe jo JSON round-trip actually leta hai, wahi simulate karta hai
+// simulates exactly the JSON round-trip a message takes over the wire
 function overTheWire<T>(value: T): unknown {
   return JSON.parse(JSON.stringify(value));
 }
 
 const opId = { counter: 1, replicaId: "alice" };
 
+// Every client message type should survive a JSON round-trip unchanged.
 describe("client message round-trips", () => {
   const samples: ClientMessage[] = [
     { type: "join", docId: "doc-1", replicaId: "alice", sinceSeq: 0 },
@@ -45,7 +46,7 @@ describe("client message round-trips", () => {
       name: "Alice",
       color: "#ff0000",
     },
-    { type: "presence", docId: "doc-1" }, // awareness ke saare fields optional hain
+    { type: "presence", docId: "doc-1" }, // every awareness field is optional
     { type: "leave", docId: "doc-1" },
   ];
 
@@ -54,6 +55,8 @@ describe("client message round-trips", () => {
     expect(result).toEqual({ success: true, data: message });
   });
 
+  // parseClientMessage discriminates on "type" before delegating to the
+  // per-message schema, so also check the union schema accepts everything directly.
   test("clientMessageSchema accepts the same samples directly", () => {
     for (const message of samples) {
       expect(clientMessageSchema.safeParse(overTheWire(message)).success).toBe(true);
@@ -61,6 +64,7 @@ describe("client message round-trips", () => {
   });
 });
 
+// Same coverage as above, but for the server -> client direction.
 describe("server message round-trips", () => {
   const samples: ServerMessage[] = [
     { type: "snapshot", docId: "doc-1", seq: 5, state: [{ id: opId, originId: null, value: "h", tombstone: false }] },
@@ -78,9 +82,10 @@ describe("server message round-trips", () => {
   });
 });
 
+// Parsers must fail closed on bad shapes rather than throwing or silently coercing.
 describe("rejects malformed input", () => {
   test("missing required field", () => {
-    const result = parseClientMessage({ type: "join", docId: "doc-1" }); // replicaId/sinceSeq missing hai
+    const result = parseClientMessage({ type: "join", docId: "doc-1" }); // replicaId/sinceSeq are missing
     expect(result.success).toBe(false);
   });
 
@@ -90,7 +95,7 @@ describe("rejects malformed input", () => {
   });
 
   test("op with wrong shape is rejected", () => {
-    expect(opSchema.safeParse({ type: "insert", id: opId }).success).toBe(false); // value missing hai
+    expect(opSchema.safeParse({ type: "insert", id: opId }).success).toBe(false); // value is missing
   });
 
   test("non-object input", () => {
@@ -98,7 +103,9 @@ describe("rejects malformed input", () => {
     expect(parseServerMessage(null).success).toBe(false);
   });
 
-  test("docId over the length cap is rejected (BUG-009)", () => {
+  // unbounded string/array fields let a client send oversized payloads to exhaust server memory; these caps close that hole.
+
+  test("docId over the length cap is rejected", () => {
     const result = parseClientMessage({
       type: "join",
       docId: "d".repeat(201),
@@ -108,7 +115,7 @@ describe("rejects malformed input", () => {
     expect(result.success).toBe(false);
   });
 
-  test("presence name over the length cap is rejected (BUG-009)", () => {
+  test("presence name over the length cap is rejected", () => {
     const result = parseClientMessage({
       type: "presence",
       docId: "doc-1",
@@ -117,7 +124,7 @@ describe("rejects malformed input", () => {
     expect(result.success).toBe(false);
   });
 
-  test("an op batch over the size cap is rejected (BUG-009)", () => {
+  test("an op batch over the size cap is rejected", () => {
     const ops = Array.from({ length: 2001 }, (_, i) => ({
       type: "insert" as const,
       id: { counter: i + 1, replicaId: "alice" },
@@ -128,7 +135,7 @@ describe("rejects malformed input", () => {
     expect(result.success).toBe(false);
   });
 
-  test("an insert op value over the length cap is rejected (BUG-009)", () => {
+  test("an insert op value over the length cap is rejected", () => {
     const result = opSchema.safeParse({
       type: "insert",
       id: opId,
@@ -138,10 +145,12 @@ describe("rejects malformed input", () => {
     expect(result.success).toBe(false);
   });
 
+  // Each schema must enforce its own required fields, not just accept whatever shape another message type would.
+
   test("individual message schemas reject cross-contaminated fields missing", () => {
     expect(joinMessageSchema.safeParse({ type: "join", docId: "d" }).success).toBe(false);
-    expect(opMessageSchema.safeParse({ type: "op", docId: "d", ops: [] }).success).toBe(false); // ops khali nahi ho sakta
-    expect(presenceMessageSchema.safeParse({ type: "presence" }).success).toBe(false); // docId missing hai
+    expect(opMessageSchema.safeParse({ type: "op", docId: "d", ops: [] }).success).toBe(false); // ops can't be empty
+    expect(presenceMessageSchema.safeParse({ type: "presence" }).success).toBe(false); // docId is missing
     expect(leaveMessageSchema.safeParse({ type: "leave" }).success).toBe(false);
     expect(snapshotMessageSchema.safeParse({ type: "snapshot", docId: "d", seq: 0 }).success).toBe(false);
     expect(syncMessageSchema.safeParse({ type: "sync", docId: "d" }).success).toBe(false);

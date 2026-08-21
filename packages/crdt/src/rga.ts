@@ -5,7 +5,7 @@ import type { DeleteOp, InsertOp, Op } from "./op.js";
 export interface RgaSnapshotNode {
   id: OpId;
   originId: OpId | null;
-  // compacted tombstone skeleton ho toh yeh null hoga (Rga#compactTombstones dekho)
+  // null once this is a compacted tombstone skeleton (see Rga#compactTombstones)
   value: string | null;
   tombstone: boolean;
   attrs?: FormatMark;
@@ -16,6 +16,7 @@ export interface DeltaOp {
   attributes?: FormatMark;
 }
 
+// crypto.randomUUID is not guaranteed everywhere this runs (older browsers, some test runners), so fall back to a plain random string rather than making replica creation throw.
 function defaultReplicaId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -23,14 +24,9 @@ function defaultReplicaId(): string {
   return Math.random().toString(36).slice(2);
 }
 
-// Isomorphic RGA (Replicated Growable Array) sequence CRDT hai.
-//
-// localInsert/localDelete index-based API hai jo editor binding local user
-// ke apne edits ke liye call karta hai; yeh Op return karte hain jo wire pe
-// bhejna hai / log mein append karna hai. apply replication ka entry point
-// hai — network se aaye ho ya offline outbox se replay ho rahe hon, dono ke
-// liye. Yeh idempotent hai aur jin ops ki dependency abhi tak nahi aayi
-// unhe causally buffer kar leta hai.
+// Isomorphic RGA (Replicated Growable Array) sequence CRDT.
+
+// localInsert/localDelete are the index-based API the editor binding calls for the local user's own edits; they return an Op meant to go out on the wire / get appended to the log. apply is the entry point for replication — whether the op came in over the network or is being replayed from the offline outbox. It's idempotent and buffers ops whose dependency hasn't arrived yet until it does.
 export class Rga {
   readonly replicaId: string;
   private head: RgaNode | null = null;
@@ -43,7 +39,7 @@ export class Rga {
   }
 
   localInsert(index: number, value: string, attrs?: FormatMark): InsertOp {
-    // naya node index se pehle wale node ke "baad" jud raha hai — origin hamesha left-neighbor hota hai
+    // the new node attaches "after" the node before index — origin is always the left neighbor
     const anchor = this.findNodeAtPosition(index - 1);
     const op: InsertOp = {
       type: "insert",
@@ -56,6 +52,7 @@ export class Rga {
     return op;
   }
 
+  // Marks the node as a tombstone instead of unlinking it — other replicas may still reference this node as an insert origin, so the list structure has to stay intact.
   localDelete(index: number): DeleteOp {
     const node = this.findNodeAtPosition(index);
     if (node === null) {
@@ -65,7 +62,7 @@ export class Rga {
     return { type: "delete", targetId: node.id };
   }
 
-  // idempotent hai, aur causally-ordered tareeke se remote/replayed op apply karta hai
+  // Idempotent — applies a remote/replayed op in causal order.
   apply(op: Op): void {
     const queue: Op[] = [op];
     while (queue.length > 0) {
@@ -73,9 +70,9 @@ export class Rga {
 
       if (current.type === "insert") {
         const idKey = opIdToString(current.id);
-        if (this.nodesById.has(idKey)) continue; // yeh op pehle hi apply ho chuka hai, dobara mat karo
+        if (this.nodesById.has(idKey)) continue; // already applied this op, don't redo it
 
-        // origin abhi tak nahi aaya — is op ko wapas bhejne ka wait mat karo, bas buffer kar do
+        // origin hasn't arrived yet — don't wait to resend this op, just buffer it
         const originKey = current.originId ? opIdToString(current.originId) : null;
         if (originKey !== null && !this.nodesById.has(originKey)) {
           this.bufferOn(originKey, current);
@@ -85,7 +82,7 @@ export class Rga {
         const anchor = originKey !== null ? (this.nodesById.get(originKey) as RgaNode) : null;
         this.integrate(anchor, current);
         this.counter = Math.max(this.counter, current.id.counter);
-        // ab jab yeh node aa gaya, jo ops isi pe wait kar rahe thay unhe bhi queue mein daal do
+        // now that this node has landed, replay whatever ops were waiting on it
         queue.push(...this.takeBuffered(idKey));
       } else {
         const targetKey = opIdToString(current.targetId);
@@ -103,11 +100,12 @@ export class Rga {
     for (const op of ops) this.apply(op);
   }
 
+  // Walks the linked list in id order, which is the same order every replica converges to, so this always produces the current document text regardless of edit history.
   read(): string {
     let result = "";
     let node = this.head;
     while (node !== null) {
-      // attrs wale marker nodes actual text nahi hain, format boundary hain — inko text mein mat jodo
+      // marker nodes (with attrs) aren't real text, they're format boundaries — skip them
       if (!node.tombstone && !node.attrs && node.value !== null) {
         result += node.value;
       }
@@ -116,7 +114,7 @@ export class Rga {
     return result;
   }
 
-  // Quill-Delta-shaped output deta hai, Peritext-style marker nodes ko attribute runs mein badal ke
+  // Produces Quill-Delta-shaped output by turning the Peritext-style marker nodes into attribute runs.
   getContentsForEditor(): DeltaOp[] {
     const content: DeltaOp[] = [];
     let node = this.head;
@@ -129,13 +127,13 @@ export class Rga {
         continue;
       }
       if (node.attrs) {
-        // marker node mila — matlab ya toh ek format run band ho raha hai ya khul raha hai
+        // hit a marker node — either a format run is closing or a new one is opening
         if (activeAttribute !== "") {
-          // format band ho raha hai — ab tak ka tempContent us attribute ke saath push karo
+          // format run is closing — push what's accumulated so far under that attribute
           content.push({ insert: tempContent, attributes: { [activeAttribute]: true } });
           activeAttribute = "";
         } else {
-          // naya format shuru ho raha hai — usse pehle ka plain tempContent push kar do
+          // a new format run is starting — flush the plain content that came before it
           activeAttribute = Object.keys(node.attrs)[0] as string;
           content.push({ insert: tempContent });
         }
@@ -146,7 +144,7 @@ export class Rga {
       node = node.next;
     }
     content.push({ insert: tempContent });
-    content.push({ insert: "\n" }); // Quill delta ko trailing newline chahiye hi, warna Quill complain karta hai
+    content.push({ insert: "\n" }); // Quill delta requires a trailing newline or Quill complains
     return content;
   }
 
@@ -166,6 +164,7 @@ export class Rga {
     return out;
   }
 
+  // Rebuilds the list directly from the ordered snapshot instead of replaying every insert/delete op — snapshots are already in final list order, so this just relinks them. counter is seeded from the highest id seen so new local ops never collide with ids that already exist in the snapshot.
   static fromSnapshot(snapshot: RgaSnapshotNode[], replicaId?: string): Rga {
     const rga = new Rga(replicaId);
     let prev: RgaNode | null = null;
@@ -192,8 +191,7 @@ export class Rga {
     return rga;
   }
 
-  // tombstoned nodes ka payload clear kar deta hai, sirf id/originId skeleton bacha rehta hai —
-  // node hata nahi sakte, baad ka koi insert isko origin ke taur pe reference kar sakta hai
+  // Clears the payload on tombstoned nodes, leaving just the id/originId skeleton — the node can't be removed outright since a later insert may still reference it as an origin.
   compactTombstones(): void {
     let node = this.head;
     while (node !== null) {
@@ -206,7 +204,7 @@ export class Rga {
   }
 
   private nextId(): OpId {
-    // counter har replica apna alag rakhta hai, replicaId ke saath milke globally unique id ban jaati hai
+    // each replica keeps its own counter; paired with replicaId it becomes globally unique
     this.counter += 1;
     return { counter: this.counter, replicaId: this.replicaId };
   }
@@ -227,19 +225,7 @@ export class Rga {
     return ops;
   }
 
-  // anchor (uska recorded origin) ke baad naya node link karta hai. Yeh classical
-  // RGA integration rule hai: origin se right scan karo, jis bhi node ka id
-  // strictly greater hai usko cross karte raho, chahe uska origin kuch bhi ho.
-  // Yahan "optimize" karne ka mann karega — sirf direct same-origin siblings
-  // compare karo aur descendant subtrees explicitly skip kar do — dikhne mein
-  // same lagega par hai nahi: isse ek unrelated concurrent sibling doosre
-  // origin ke not-yet-fully-arrived subtree ke andar ghus sakta hai, delivery
-  // order pe depend karke, aur convergence toot jaayegi. (Yeh bug property
-  // test test/convergence.property.test.ts ne pakda tha — agar kabhi phir
-  // "simplify" karne ka mann kare toh git history mein counter-example dekh
-  // lena.) Yeh plain greater-id-anywhere-in-the-scan rule hi RGA paper
-  // (Attiya et al.) mein diya hai, aur isi se total order har replica pe
-  // consistent rehta hai, delivery order chahe kuch bhi ho.
+  // Links the new node in after anchor (its recorded origin). This is the classical RGA integration rule: scan right from the origin, and keep crossing over any node whose id is strictly greater, regardless of that node's own origin. It's tempting to "optimize" this — only compare direct same-origin siblings and explicitly skip descendant subtrees — it looks equivalent but isn't: it lets an unrelated concurrent sibling end up inside another origin's not-yet-fully-arrived subtree depending on delivery order, which breaks convergence. (This exact bug was caught by test/convergence.property.test.ts — if you're ever tempted to "simplify" this again, check the git history for the counter-example.) The plain greater-id-anywhere-in-the-scan rule is what the RGA paper (Attiya et al.) specifies, and it's what keeps the total order consistent across every replica no matter what order ops are delivered in.
   private integrate(anchor: RgaNode | null, op: InsertOp): RgaNode {
     const newNode: RgaNode = {
       id: op.id,
@@ -254,7 +240,7 @@ export class Rga {
     let left = anchor;
     let right = anchor ? anchor.next : this.head;
 
-    // jitna aage tak id humse bada hai utna aage badho — isi se total order deterministic banta hai
+    // keep advancing while the id ahead is greater than ours — this is what makes the total order deterministic
     while (right !== null && compareOpId(right.id, op.id) > 0) {
       left = right;
       right = right.next;
@@ -272,7 +258,7 @@ export class Rga {
   private findNodeAtPosition(position: number): RgaNode | null {
     if (position < 0) return null;
 
-    // tombstoned aur marker (attrs) nodes visible text mein count nahi hote, unko skip karte chalo
+    // tombstoned and marker (attrs) nodes don't count toward visible text positions — skip over them
     let node = this.head;
     while (node !== null && (node.tombstone || node.attrs)) {
       node = node.next;

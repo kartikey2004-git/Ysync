@@ -5,7 +5,7 @@ interface DocPageProps {
 }
 
 export default async function DocPage({ params }: DocPageProps) {
-  // App Router mein params ek Promise hota hai (async by design hai, sirf typing ki gadbad nahi)
+  // params is a Promise in the App Router (async by design, not a typing mistake)
   const { slug } = await params;
   return <DocEditor slug={slug} />;
 }

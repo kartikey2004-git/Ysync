@@ -11,8 +11,8 @@ function fakeSocket(): WebSocket {
   return { readyState: 1, OPEN: 1, send: () => {} } as unknown as WebSocket;
 }
 
-// pehle `failCount` unsubscribe calls throw karta hai, uske baad sab InMemoryPubSubBus
-// ko delegate ho jaata hai — Redis ke ek transient unsubscribe failure ko simulate karta hai
+// Throws on the first `failCount` unsubscribe calls, then delegates everything to a
+// plain InMemoryPubSubBus — simulates one transient Redis unsubscribe failure.
 class FlakyUnsubscribePubSubBus implements PubSubBus {
   private readonly inner = new InMemoryPubSubBus();
   private unsubscribeCalls = 0;
@@ -41,7 +41,7 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-describe("RoomManager idle-eviction retries after a failed unsubscribe (BUG-012)", () => {
+describe("RoomManager idle-eviction retries after a failed unsubscribe", () => {
   let manager: RoomManager | undefined;
 
   afterEach(async () => {
@@ -58,7 +58,7 @@ describe("RoomManager idle-eviction retries after a failed unsubscribe (BUG-012)
       return originalLoad(docId);
     };
 
-    // sirf pehla unsubscribe call (eviction ke pehle attempt ka) fail hoga
+    // only the first unsubscribe call (the eviction's first attempt) will fail
     const pubSubBus = new FlakyUnsubscribePubSubBus(1);
 
     manager = new RoomManager({
@@ -71,24 +71,24 @@ describe("RoomManager idle-eviction retries after a failed unsubscribe (BUG-012)
     });
 
     await manager.join("doc-1", "alice", fakeSocket());
-    expect(loadCalls).toBe(1); // room create karne ke liye pehla (aur abhi tak sirf ek hi) load
-    await manager.leave("doc-1", "alice"); // room khali ho gaya, idle clock shuru
+    expect(loadCalls).toBe(1); // the first (and so far only) load, to create the room
+    await manager.leave("doc-1", "alice"); // room is now empty, idle clock starts
 
-    // pehla eviction attempt (~15ms baad) fail hoga (unsubscribe throw karega) —
-    // fix se pehle yeh room ko hamesha ke liye stale chhod deta (sweepTimer already dead)
+    // the first eviction attempt (~15ms later) will fail (unsubscribe throws) — before
+    // the fix this left the room permanently stale (sweepTimer already dead)
     await wait(30);
-    // Agar room abhi bhi registered hai (evict nahi hua), rejoin karne se koi naya
-    // load nahi hoga — reused hoga, recreate nahi
+    // if the room is still registered (not evicted), rejoining shouldn't trigger a new
+    // load — it should be reused, not recreated
     await manager.join("doc-1", "bob", fakeSocket());
-    expect(loadCalls).toBe(1); // room reused, dobara Postgres se load nahi hua
-    await manager.leave("doc-1", "bob"); // phir se khali, idle clock restart
+    expect(loadCalls).toBe(1); // room reused, no reload from Postgres
+    await manager.leave("doc-1", "bob"); // empty again, idle clock restarts
 
-    // ab unsubscribe har baar succeed karega — eviction ko retry ka mauka do
+    // unsubscribe now succeeds every time — give eviction a chance to retry
     await wait(60);
 
-    // room ab evict ho chuka hona chahiye — naya join isse dobara persistence se load karega
+    // the room should be evicted by now — a new join will reload it from persistence
     await manager.join("doc-1", "carol", fakeSocket());
-    expect(loadCalls).toBe(2); // evict ho chuka tha, isliye dobara load hua
+    expect(loadCalls).toBe(2); // it had been evicted, so it reloaded
     await manager.leave("doc-1", "carol");
   });
 });

@@ -2,9 +2,7 @@ import { Redis } from "ioredis";
 import type { PubSubBus } from "./PubSubBus.js";
 import { logger, errorMeta } from "../logger.js";
 
-// Real Redis wala PubSubBus. ioredis mein jis connection ne SUBSCRIBE call kar diya,
-// woh sirf subscriber commands hi handle kar sakta hai — isliye publish aur
-// subscribe dono ke alag connections rakhne pade.
+// Real Redis-backed PubSubBus. In ioredis, once a connection has called SUBSCRIBE it can only handle subscriber commands — that's why publish and subscribe each need their own connection.
 export class RedisPubSubBus implements PubSubBus {
   private readonly publisher: Redis;
   private readonly subscriber: Redis;

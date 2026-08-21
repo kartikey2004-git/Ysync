@@ -6,9 +6,7 @@ import { PrismaPersistenceStore } from "./persistence/PrismaPersistenceStore.js"
 import { logger, errorMeta } from "./logger.js";
 import { resolveRequiredUrl } from "./config.js";
 
-// yeh last-resort safety net hai, primary fix nahi — server.ts already normal
-// operation ke saare rejections pakad leta hai. Yeh bas kisi anjaan bug se poora
-// instance girne se bacha raha hai (Node 15+ default mein unhandled rejection pe process kill kar deta hai)
+// this is a last-resort safety net, not the primary fix — server.ts already catches every rejection from normal operation. This just stops an unknown bug from taking down the whole instance (Node 15+ kills the process on an unhandled rejection by default)
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandled promise rejection", { error: errorMeta(reason) });
 });
@@ -24,8 +22,7 @@ const databaseUrl = resolveRequiredUrl(
   "postgresql://postgres:postgres@localhost:5432/ysync",
 );
 
-// comma-separated allowlist — unset/empty rehta hai toh origin check disabled
-// hi rehta hai (BUG-008), koi breaking change nahi bina opt-in ke
+// comma-separated allowlist — left unset/empty, origin checking stays disabled, so this is no breaking change without an explicit opt-in
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",")
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
@@ -33,8 +30,7 @@ if (!allowedOrigins || allowedOrigins.length === 0) {
   logger.warn("ALLOWED_ORIGINS not set — WS origin checking is disabled, any origin can connect");
 }
 
-// REDIS_URL/DATABASE_URL ko kabhi raw log mat karo — dono mein password embed ho
-// sakta hai (jaise redis://:PASSWORD@host:port). Sirf itna log karo ki env se aaya ya default use hua.
+// never log REDIS_URL/DATABASE_URL raw — both can have a password embedded (e.g. redis://:PASSWORD@host:port). Only log whether it came from env or fell back to the default.
 logger.info("ysync server bootstrap starting", {
   port,
   usingRedisUrlFromEnv: Boolean(process.env.REDIS_URL),

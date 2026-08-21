@@ -1,9 +1,4 @@
-// Per-document monotonic seq assign karta hai, catch-up ke liye use hota hai. Yeh
-// authority har server process ke liye common honi chahiye — agar har process apna
-// local counter badhata toh "seq" ka matlab har process mein alag hota, aur global
-// catch-up cursor ka poora fayda hi khatam ho jata. Production mein Redis (INCR)
-// hi yeh shared authority hai; PubSubBus / PresenceStore mein bhi same
-// in-memory-fake-for-tests pattern hai.
+// Assigns a per-document monotonic seq, used for catch-up. This authority has to be shared across every server process — if each process incremented its own local counter, "seq" would mean something different per process and the whole point of a global catch-up cursor would be lost. In production Redis (INCR) is that shared authority; same in-memory-fake-for-tests pattern as PubSubBus / PresenceStore.
 export interface SeqAllocator {
   next(docId: string): Promise<number>;
   current(docId: string): Promise<number>;

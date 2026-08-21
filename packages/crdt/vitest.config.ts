@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // unit tests aur fast-check wala property test dono test/ ke andar hi hain
+    // both the unit tests and the fast-check property test live under test/
     include: ["test/**/*.test.ts"],
   },
 });

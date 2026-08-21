@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   description: "Real-time collaborative text editing on a custom sequence CRDT.",
 };
 
-// Har route isi shell ke andar render hota hai — sirf fonts aur <html>/<body> wrapper hai, koi app state yahan nahi
+// every route renders inside this shell — just fonts and the <html>/<body> wrapper, no app state here
 export default function RootLayout({
   children,
 }: Readonly<{

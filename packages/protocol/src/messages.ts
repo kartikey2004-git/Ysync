@@ -2,10 +2,7 @@ import { z } from "zod";
 import { opIdSchema, opSchema } from "./op.js";
 import { rgaSnapshotNodeSchema } from "./rgaSnapshot.js";
 
-// upper bounds hardening ke liye hain (BUG-009) — kisi bhi legitimate use case
-// se kaafi zyada generous hain, bas ek malicious/broken client ko arbitrarily
-// bade strings/batches bhejne se rokte hain (sabhi clients ko broadcast hote
-// hain aur Postgres mein persist hote hain)
+// these upper bounds are hardening — generous well beyond any legitimate use case, just there to stop a malicious/broken client from sending arbitrarily large strings/batches (everything here gets broadcast to all clients and persisted to Postgres)
 const docId = z.string().min(1).max(200);
 const replicaId = z.string().min(1).max(200);
 const seq = z.number().int().nonnegative();
@@ -17,7 +14,7 @@ const selectionSchema = z
   })
   .nullable();
 
-// yeh awareness fields client ke presence message aur server ke presence-update broadcast dono mein common hain
+// these awareness fields are shared between the client's presence message and the server's presence-update broadcast
 const awarenessFields = {
   cursor: z.number().int().nonnegative().nullable().optional(),
   selection: selectionSchema.optional(),

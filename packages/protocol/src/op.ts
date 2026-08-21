@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-// @ysync/crdt ke OpId ko mirror karta hai
+// mirrors @ysync/crdt's OpId
 export const opIdSchema = z.object({
   counter: z.number().int().nonnegative(),
   replicaId: z.string().min(1),
 });
 
-// @ysync/crdt ke FormatMark ko mirror karta hai
+// mirrors @ysync/crdt's FormatMark
 export const formatMarkSchema = z.record(z.literal(true));
 
 export const insertOpSchema = z.object({
@@ -14,7 +14,7 @@ export const insertOpSchema = z.object({
   id: opIdSchema,
   originId: opIdSchema.nullable(),
   // normal typing produces one char per op (deltaToEdits.ts) — this cap is
-  // just a ceiling for a single-op paste-as-one-string case (BUG-009)
+  // just a ceiling for a single-op paste-as-one-string case
   value: z.string().max(4000),
   attrs: formatMarkSchema.optional(),
 });
@@ -24,7 +24,7 @@ export const deleteOpSchema = z.object({
   targetId: opIdSchema,
 });
 
-// @ysync/crdt ke Op union ko mirror karta hai
+// mirrors @ysync/crdt's Op union
 export const opSchema = z.discriminatedUnion("type", [insertOpSchema, deleteOpSchema]);
 
 export type OpIdShape = z.infer<typeof opIdSchema>;

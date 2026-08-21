@@ -1,4 +1,4 @@
-// apps/web aur apps/server ke beech WS pe jo bhi value jaati hai uske liye zod schemas + inferred types
+// zod schemas + inferred types for every value that crosses the WS boundary between apps/web and apps/server
 export { opIdSchema, formatMarkSchema, insertOpSchema, deleteOpSchema, opSchema } from "./op.js";
 export type { OpIdShape, FormatMarkShape, InsertOpShape, DeleteOpShape, OpShape } from "./op.js";
 
