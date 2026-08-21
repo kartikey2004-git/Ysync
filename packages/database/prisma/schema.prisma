@@ -18,16 +18,22 @@ model Document {
 
 // One row per Op. Several rows can share the same `seq` — seq is assigned
 // per client-submitted batch (RoomManager.applyClientOp), not per op.
+// targetId/mark/formatValue are populated only for type = "format" (see
+// @ysync/crdt's FormatOp) — a delete op's target is recovered from opId itself
+// (opIdKeyOf(deleteOp) === targetId), it doesn't need its own column.
 model Operation {
-  id        BigInt   @id @default(autoincrement())
-  docId     String
-  seq       Int
-  opId      String
-  type      String
-  originId  String?
-  value     String?
-  attrs     Json?
-  createdAt DateTime @default(now())
+  id          BigInt   @id @default(autoincrement())
+  docId       String
+  seq         Int
+  opId        String
+  type        String
+  originId    String?
+  value       String?
+  attrs       Json?
+  targetId    String?
+  mark        String?
+  formatValue Boolean?
+  createdAt   DateTime @default(now())
 
   @@unique([docId, opId])
   @@index([docId, seq])

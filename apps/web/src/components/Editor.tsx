@@ -39,7 +39,15 @@ export function Editor({ client }: EditorProps) {
     container.appendChild(editorEl);
     const quill = new Quill(editorEl, {
       theme: "snow",
-      modules: { cursors: true },
+      modules: {
+        cursors: true,
+        // restricted to the boolean marks @ysync/crdt's FormatMark actually models
+        // (see deltaToEdits.ts) — Quill's full default toolbar includes non-boolean
+        // attributes (headers, lists, colors, links, alignment...) that would visually
+        // apply and then silently revert on the next sync, same failure mode this
+        // toolbar exists to avoid.
+        toolbar: [["bold", "italic", "underline", "strike"]],
+      },
     });
     const cursors = quill.getModule("cursors") as QuillCursors;
     // which replicaIds currently have a cursor built in the DOM, so move vs create can be told apart and a cursor only gets removed once its owner actually leaves

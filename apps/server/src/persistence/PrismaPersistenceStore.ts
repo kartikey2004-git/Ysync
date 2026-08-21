@@ -17,6 +17,9 @@ interface OperationRow {
   originId: string | null;
   value: string | null;
   attrs: Prisma.JsonValue | null;
+  targetId: string | null;
+  mark: string | null;
+  formatValue: boolean | null;
 }
 
 function toRow(docId: string, seq: number, op: Op) {
@@ -30,9 +33,37 @@ function toRow(docId: string, seq: number, op: Op) {
       originId: op.originId ? opIdToString(op.originId) : null,
       value: op.value,
       attrs: (op.attrs ?? null) as Prisma.InputJsonValue | null,
+      targetId: null,
+      mark: null,
+      formatValue: null,
     };
   }
-  return { docId, seq, opId, type: "delete", originId: null, value: null, attrs: null };
+  if (op.type === "format") {
+    return {
+      docId,
+      seq,
+      opId,
+      type: "format",
+      originId: null,
+      value: null,
+      attrs: null,
+      targetId: opIdToString(op.targetId),
+      mark: op.mark,
+      formatValue: op.value === true,
+    };
+  }
+  return {
+    docId,
+    seq,
+    opId,
+    type: "delete",
+    originId: null,
+    value: null,
+    attrs: null,
+    targetId: null,
+    mark: null,
+    formatValue: null,
+  };
 }
 
 function fromRow(row: OperationRow): Op {
@@ -44,6 +75,15 @@ function fromRow(row: OperationRow): Op {
       originId: row.originId ? opIdFromString(row.originId) : null,
       value: row.value ?? "",
       attrs: (row.attrs as FormatMark | null) ?? undefined,
+    };
+  }
+  if (row.type === "format") {
+    return {
+      type: "format",
+      id,
+      targetId: opIdFromString(row.targetId as string),
+      mark: row.mark as string,
+      value: row.formatValue ? true : null,
     };
   }
   return { type: "delete", targetId: id };

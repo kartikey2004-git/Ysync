@@ -24,11 +24,21 @@ export const deleteOpSchema = z.object({
   targetId: opIdSchema,
 });
 
+// mirrors @ysync/crdt's FormatOp
+export const formatOpSchema = z.object({
+  type: z.literal("format"),
+  id: opIdSchema,
+  targetId: opIdSchema,
+  mark: z.string().min(1).max(100),
+  value: z.union([z.literal(true), z.null()]),
+});
+
 // mirrors @ysync/crdt's Op union
-export const opSchema = z.discriminatedUnion("type", [insertOpSchema, deleteOpSchema]);
+export const opSchema = z.discriminatedUnion("type", [insertOpSchema, deleteOpSchema, formatOpSchema]);
 
 export type OpIdShape = z.infer<typeof opIdSchema>;
 export type FormatMarkShape = z.infer<typeof formatMarkSchema>;
 export type InsertOpShape = z.infer<typeof insertOpSchema>;
 export type DeleteOpShape = z.infer<typeof deleteOpSchema>;
+export type FormatOpShape = z.infer<typeof formatOpSchema>;
 export type OpShape = z.infer<typeof opSchema>;

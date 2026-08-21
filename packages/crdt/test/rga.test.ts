@@ -162,6 +162,131 @@ describe("replication", () => {
   });
 });
 
+describe("formatting", () => {
+  test("localInsert with attrs shows up as an attributed run, and read() still returns plain text", () => {
+    const rga = new Rga();
+    rga.localInsert(0, "a");
+    rga.localInsert(1, "b", { bold: true });
+    rga.localInsert(2, "c");
+
+    expect(rga.read()).toEqual("abc");
+    expect(rga.getContentsForEditor()).toEqual([
+      { insert: "a" },
+      { insert: "b", attributes: { bold: true } },
+      { insert: "c" },
+      { insert: "\n" },
+    ]);
+  });
+
+  test("localFormat retroactively marks existing plain text without changing read()", () => {
+    const rga = new Rga();
+    rga.localInsert(0, "a");
+    rga.localInsert(1, "b");
+    rga.localInsert(2, "c");
+
+    rga.localFormat(1, 1, { bold: true });
+
+    expect(rga.read()).toEqual("abc");
+    expect(rga.getContentsForEditor()).toEqual([
+      { insert: "a" },
+      { insert: "b", attributes: { bold: true } },
+      { insert: "c" },
+      { insert: "\n" },
+    ]);
+  });
+
+  test("localFormat with a null patch value removes an existing mark", () => {
+    const rga = new Rga();
+    rga.localInsert(0, "a", { bold: true });
+    rga.localFormat(0, 1, { bold: null });
+
+    expect(rga.getContentsForEditor()).toEqual([{ insert: "a" }, { insert: "\n" }]);
+  });
+
+  test("localFormat merges with existing marks instead of replacing them", () => {
+    const rga = new Rga();
+    rga.localInsert(0, "a", { bold: true });
+    rga.localFormat(0, 1, { italic: true });
+
+    expect(rga.getContentsForEditor()).toEqual([
+      { insert: "a", attributes: { bold: true, italic: true } },
+      { insert: "\n" },
+    ]);
+  });
+
+  test("localFormat spanning multiple characters formats all of them and leaves the rest untouched", () => {
+    const rga = new Rga();
+    for (const [i, ch] of [..."hello"].entries()) rga.localInsert(i, ch);
+
+    rga.localFormat(1, 3, { bold: true }); // "ell"
+
+    expect(rga.read()).toEqual("hello");
+    expect(rga.getContentsForEditor()).toEqual([
+      { insert: "h" },
+      { insert: "ell", attributes: { bold: true } },
+      { insert: "o" },
+      { insert: "\n" },
+    ]);
+  });
+
+  test("apply() replays format ops from a remote replica and converges", () => {
+    const alice = new Rga("alice");
+    alice.localInsert(0, "a");
+    alice.localInsert(1, "b");
+    alice.localInsert(2, "c");
+
+    const bob = Rga.fromSnapshot(alice.toSnapshot(), "bob");
+
+    const formatOps = alice.localFormat(1, 1, { bold: true });
+    bob.applyAll(formatOps);
+
+    expect(bob.read()).toEqual(alice.read());
+    expect(bob.getContentsForEditor()).toEqual(alice.getContentsForEditor());
+  });
+
+  test("concurrent formatting of overlapping ranges from two replicas converges without duplicating characters", () => {
+    const alice = new Rga("alice");
+    alice.localInsert(0, "a");
+    alice.localInsert(1, "b");
+    alice.localInsert(2, "c");
+
+    const bob = Rga.fromSnapshot(alice.toSnapshot(), "bob");
+
+    const aliceOps = alice.localFormat(0, 2, { bold: true }); // "ab"
+    const bobOps = bob.localFormat(1, 2, { italic: true }); // "bc"
+
+    alice.applyAll(bobOps);
+    bob.applyAll(aliceOps);
+
+    // the overlapping character "b" picks up both marks — it must NOT become two characters
+    expect(alice.read()).toEqual("abc");
+    expect(bob.read()).toEqual(alice.read());
+    expect(bob.getContentsForEditor()).toEqual(alice.getContentsForEditor());
+    expect(alice.getContentsForEditor()).toEqual([
+      { insert: "a", attributes: { bold: true } },
+      { insert: "b", attributes: { bold: true, italic: true } },
+      { insert: "c", attributes: { italic: true } },
+      { insert: "\n" },
+    ]);
+  });
+
+  test("concurrent format ops on the same mark of the same character converge to one winner (LWW by op id)", () => {
+    const alice = new Rga("alice");
+    alice.localInsert(0, "a");
+
+    const bob = Rga.fromSnapshot(alice.toSnapshot(), "bob");
+
+    // both replicas race to decide "bold" for the same character, one setting it, one clearing it
+    const aliceOps = alice.localFormat(0, 1, { bold: true });
+    const bobOps = bob.localFormat(0, 1, { bold: null });
+
+    alice.applyAll(bobOps);
+    bob.applyAll(aliceOps);
+
+    expect(bob.getContentsForEditor()).toEqual(alice.getContentsForEditor());
+  });
+});
+
 describe("snapshot + tombstone compaction", () => {
   test("toSnapshot/fromSnapshot round-trips the document", () => {
     const rga = new Rga();

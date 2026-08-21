@@ -1,6 +1,6 @@
 import { compareOpId, opIdToString, type OpId } from "./opId.js";
-import type { FormatMark, RgaNode } from "./node.js";
-import type { DeleteOp, InsertOp, Op } from "./op.js";
+import type { FormatMark, FormatPatch, RgaNode } from "./node.js";
+import type { DeleteOp, FormatOp, InsertOp, Op } from "./op.js";
 
 export interface RgaSnapshotNode {
   id: OpId;
@@ -9,6 +9,7 @@ export interface RgaSnapshotNode {
   value: string | null;
   tombstone: boolean;
   attrs?: FormatMark;
+  formatClock?: Record<string, OpId>;
 }
 
 export interface DeltaOp {
@@ -84,7 +85,7 @@ export class Rga {
         this.counter = Math.max(this.counter, current.id.counter);
         // now that this node has landed, replay whatever ops were waiting on it
         queue.push(...this.takeBuffered(idKey));
-      } else {
+      } else if (current.type === "delete") {
         const targetKey = opIdToString(current.targetId);
         const target = this.nodesById.get(targetKey);
         if (target === undefined) {
@@ -92,6 +93,15 @@ export class Rga {
           continue;
         }
         target.tombstone = true;
+      } else {
+        const targetKey = opIdToString(current.targetId);
+        const target = this.nodesById.get(targetKey);
+        if (target === undefined) {
+          this.bufferOn(targetKey, current);
+          continue;
+        }
+        this.applyFormatOp(target, current);
+        this.counter = Math.max(this.counter, current.id.counter);
       }
     }
   }
@@ -105,8 +115,7 @@ export class Rga {
     let result = "";
     let node = this.head;
     while (node !== null) {
-      // marker nodes (with attrs) aren't real text, they're format boundaries — skip them
-      if (!node.tombstone && !node.attrs && node.value !== null) {
+      if (!node.tombstone && node.value !== null) {
         result += node.value;
       }
       node = node.next;
@@ -114,38 +123,79 @@ export class Rga {
     return result;
   }
 
-  // Produces Quill-Delta-shaped output by turning the Peritext-style marker nodes into attribute runs.
+  // Produces Quill-Delta-shaped output by coalescing consecutive characters that share
+  // the same formatting marks into a single attributed run.
   getContentsForEditor(): DeltaOp[] {
     const content: DeltaOp[] = [];
     let node = this.head;
-    let tempContent = "";
-    let activeAttribute = "";
+    let runText = "";
+    let runAttrs: FormatMark | undefined;
+
+    const flush = () => {
+      if (runText.length === 0) return;
+      content.push(runAttrs ? { insert: runText, attributes: runAttrs } : { insert: runText });
+      runText = "";
+    };
 
     while (node !== null) {
-      if (node.tombstone) {
-        node = node.next;
-        continue;
-      }
-      if (node.attrs) {
-        // hit a marker node — either a format run is closing or a new one is opening
-        if (activeAttribute !== "") {
-          // format run is closing — push what's accumulated so far under that attribute
-          content.push({ insert: tempContent, attributes: { [activeAttribute]: true } });
-          activeAttribute = "";
-        } else {
-          // a new format run is starting — flush the plain content that came before it
-          activeAttribute = Object.keys(node.attrs)[0] as string;
-          content.push({ insert: tempContent });
+      if (!node.tombstone && node.value !== null) {
+        if (!attrsEqual(node.attrs, runAttrs)) {
+          flush();
+          runAttrs = node.attrs;
         }
-        tempContent = "";
-      } else if (node.value !== null) {
-        tempContent += node.value;
+        runText += node.value;
       }
       node = node.next;
     }
-    content.push({ insert: tempContent });
+    flush();
     content.push({ insert: "\n" }); // Quill delta requires a trailing newline or Quill complains
     return content;
+  }
+
+  // Retroactively applies a format patch (Quill's { bold: true } to add / { bold: null }
+  // to remove) to the `length` visible characters starting at `startIndex`. Each mark on
+  // each character becomes its own FormatOp targeting that character's existing node id —
+  // deliberately *not* delete+reinsert, which was tried first and silently duplicates
+  // characters when two replicas format overlapping ranges concurrently (see git history /
+  // test/rga.test.ts "concurrent formatting"). Mutating attrs in place via LWW keeps the
+  // node identity — and therefore the document length — untouched by formatting.
+  localFormat(startIndex: number, length: number, patch: FormatPatch): FormatOp[] {
+    const ops: FormatOp[] = [];
+    for (let i = 0; i < length; i++) {
+      const target = this.findNodeAtPosition(startIndex + i);
+      if (target === null) break; // range extends past the end of the document
+
+      for (const [mark, raw] of Object.entries(patch)) {
+        const op: FormatOp = {
+          type: "format",
+          id: this.nextId(),
+          targetId: target.id,
+          mark,
+          value: raw ? true : null,
+        };
+        this.applyFormatOp(target, op);
+        ops.push(op);
+      }
+    }
+    return ops;
+  }
+
+  // Applies one mark's LWW decision to a node: the format op with the greatest id (its
+  // own id doubles as its timestamp) wins for that (node, mark) pair, so replaying ops in
+  // any order — or replaying the same op twice — converges to the same result.
+  private applyFormatOp(target: RgaNode, op: FormatOp): void {
+    const clock = target.formatClock ?? (target.formatClock = {});
+    const decidedBy = clock[op.mark];
+    if (decidedBy !== undefined && compareOpId(decidedBy, op.id) >= 0) return;
+    clock[op.mark] = op.id;
+
+    if (op.value === true) {
+      target.attrs = { ...target.attrs, [op.mark]: true };
+    } else if (target.attrs && op.mark in target.attrs) {
+      const nextAttrs = { ...target.attrs };
+      delete nextAttrs[op.mark];
+      target.attrs = Object.keys(nextAttrs).length > 0 ? nextAttrs : undefined;
+    }
   }
 
   toSnapshot(): RgaSnapshotNode[] {
@@ -158,13 +208,14 @@ export class Rga {
         value: node.value,
         tombstone: node.tombstone,
         attrs: node.attrs,
+        formatClock: node.formatClock,
       });
       node = node.next;
     }
     return out;
   }
 
-  // Rebuilds the list directly from the ordered snapshot instead of replaying every insert/delete op — snapshots are already in final list order, so this just relinks them. counter is seeded from the highest id seen so new local ops never collide with ids that already exist in the snapshot.
+  // Rebuilds the list directly from the ordered snapshot instead of replaying every insert/delete op — snapshots are already in final list order, so this just relinks them. counter is seeded from the highest id seen (node ids *and* formatClock ids — a format op can carry a higher counter than any insert if formatting happened after the document stopped growing) so new local ops never collide with ids that already exist in the snapshot.
   static fromSnapshot(snapshot: RgaSnapshotNode[], replicaId?: string): Rga {
     const rga = new Rga(replicaId);
     let prev: RgaNode | null = null;
@@ -177,6 +228,7 @@ export class Rga {
         value: s.value,
         tombstone: s.tombstone,
         attrs: s.attrs,
+        formatClock: s.formatClock,
       };
       rga.nodesById.set(opIdToString(s.id), node);
       if (prev === null) {
@@ -186,6 +238,11 @@ export class Rga {
       }
       prev = node;
       maxCounter = Math.max(maxCounter, s.id.counter);
+      if (s.formatClock) {
+        for (const clockId of Object.values(s.formatClock)) {
+          maxCounter = Math.max(maxCounter, clockId.counter);
+        }
+      }
     }
     rga.counter = maxCounter;
     return rga;
@@ -198,6 +255,7 @@ export class Rga {
       if (node.tombstone) {
         node.value = null;
         node.attrs = undefined;
+        node.formatClock = undefined;
       }
       node = node.next;
     }
@@ -258,20 +316,28 @@ export class Rga {
   private findNodeAtPosition(position: number): RgaNode | null {
     if (position < 0) return null;
 
-    // tombstoned and marker (attrs) nodes don't count toward visible text positions — skip over them
+    // tombstoned nodes don't count toward visible text positions — skip over them
     let node = this.head;
-    while (node !== null && (node.tombstone || node.attrs)) {
+    while (node !== null && node.tombstone) {
       node = node.next;
     }
 
     let i = 0;
     while (i < position && node !== null) {
       node = node.next;
-      while (node !== null && (node.tombstone || node.attrs)) {
+      while (node !== null && node.tombstone) {
         node = node.next;
       }
       i++;
     }
     return node;
   }
+}
+
+// order-independent comparison of two attribute sets — both are plain { mark: true } maps
+function attrsEqual(a: FormatMark | undefined, b: FormatMark | undefined): boolean {
+  const aKeys = a ? Object.keys(a) : [];
+  const bKeys = b ? Object.keys(b) : [];
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => b !== undefined && b[key] === true);
 }

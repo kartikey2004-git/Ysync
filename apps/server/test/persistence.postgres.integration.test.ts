@@ -81,6 +81,26 @@ describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Pos
     await store.close();
   });
 
+  test("appendOps then load() round-trips a format op through real Postgres", async () => {
+    const store = new PrismaPersistenceStore(DATABASE_URL);
+    const docId = `test-doc-${Date.now()}-e`;
+    const opA = insertOp(1, "alice", "h");
+    const formatOp: Op = {
+      type: "format",
+      id: { counter: 2, replicaId: "alice" },
+      targetId: { counter: 1, replicaId: "alice" },
+      mark: "bold",
+      value: true,
+    };
+
+    await store.appendOps(docId, 1, [opA, formatOp]);
+    const loaded = await store.load(docId);
+
+    expect(loaded.ops).toEqual([{ seq: 1, ops: [opA, formatOp] }]);
+
+    await store.close();
+  });
+
   test("document.latestSeq never regresses even if a lower-seq appendOps commits after a higher one", async () => {
     const store = new PrismaPersistenceStore(DATABASE_URL);
     const docId = `test-doc-${Date.now()}-d`;
