@@ -2,7 +2,7 @@ import path from "node:path";
 import { config } from "dotenv";
 import { defineConfig, env } from "prisma/config";
 
-// repo-root ka .env load karta hai taaki local (Docker ke bahar) `prisma migrate`/`prisma generate` chalane pe DATABASE_URL mil jaaye
+// loads the repo-root .env so DATABASE_URL is available when running `prisma migrate`/`prisma generate` locally (outside Docker)
 config({ path: path.resolve(import.meta.dirname, "../../.env") });
 
 export default defineConfig({

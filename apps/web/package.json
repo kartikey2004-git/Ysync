@@ -13,20 +13,28 @@
   "dependencies": {
     "@ysync/crdt": "0.1.0",
     "@ysync/protocol": "0.1.0",
+    "@ysync/ui": "0.1.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.15.0",
     "idb": "^8.0.0",
+    "lucide-react": "^0.469.0",
     "next": "16.2.12",
     "quill": "2.0.2",
+    "quill-cursors": "^5.0.0",
     "quill-delta": "^5.1.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.2",
+    "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5",
     "vitest": "^2.0.5",
     "wrangler": "^4.118.0"

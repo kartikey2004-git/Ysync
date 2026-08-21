@@ -57,9 +57,8 @@ async function joinAndAwaitCatchUp(socket: WebSocket, docId: string, replicaId: 
   return snapshotPromise;
 }
 
-// Real server ko real WebSocket (loopback, ephemeral port) pe chalate hain,
-// stores in-memory wale laga ke — poora wire protocol end-to-end test hota hai,
-// bina Redis ya Postgres ke.
+// Runs the real server over a real WebSocket (loopback, ephemeral port) with
+// in-memory stores plugged in — this tests the whole wire protocol end-to-end without needing Redis or Postgres.
 describe("WS integration (single instance, real sockets)", () => {
   test("join on a brand-new room returns an empty incremental sync (no history to fall back on)", async () => {
     const { url } = await startServer();
@@ -137,7 +136,7 @@ describe("WS integration (single instance, real sockets)", () => {
     alice.close();
   });
 
-  test("a second join with the same replicaId closes the old socket, and the new one stays registered (BUG-005)", async () => {
+  test("a second join with the same replicaId closes the old socket, and the new one stays registered", async () => {
     const { url } = await startServer();
     const first = await connect(url);
     await joinAndAwaitCatchUp(first, "doc-1", "alice");
@@ -146,8 +145,8 @@ describe("WS integration (single instance, real sockets)", () => {
     const second = await connect(url);
     await joinAndAwaitCatchUp(second, "doc-1", "alice");
 
-    // pehle socket ka apna close event race karta hai — yeh exactly wahi race hai jo
-    // Room.leave ka identity check (room.ts) guard karta hai, taaki naya socket evict na ho
+    // the first socket's own close event races here — this is exactly the race that
+    // Room.leave's identity check (room.ts) guards against, so the new socket doesn't get evicted
     expect(await firstClosePromise).toBe(4000);
 
     const bob = await connect(url);
@@ -165,7 +164,7 @@ describe("WS integration (single instance, real sockets)", () => {
     bob.close();
   });
 
-  test("oversized payloads close the connection instead of being accepted (BUG-007)", async () => {
+  test("oversized payloads close the connection instead of being accepted", async () => {
     const { url } = await startServer();
     const alice = await connect(url);
 
@@ -176,12 +175,12 @@ describe("WS integration (single instance, real sockets)", () => {
     expect(await closePromise).toBe(1009); // "Message Too Big"
   });
 
-  test("a disallowed origin is rejected once allowedOrigins is configured (BUG-008)", async () => {
+  test("a disallowed origin is rejected once allowedOrigins is configured", async () => {
     const { url } = await startServer({ allowedOrigins: ["https://allowed.example"] });
     await expect(connect(url, { origin: "https://evil.example" })).rejects.toThrow();
   });
 
-  test("an allowed origin still connects once allowedOrigins is configured (BUG-008)", async () => {
+  test("an allowed origin still connects once allowedOrigins is configured", async () => {
     const { url } = await startServer({ allowedOrigins: ["https://allowed.example"] });
     const alice = await connect(url, { origin: "https://allowed.example" });
     alice.close();

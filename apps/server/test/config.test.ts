@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { resolveRequiredUrl } from "../src/config.js";
 
-describe("resolveRequiredUrl (BUG-010)", () => {
+describe("resolveRequiredUrl", () => {
   const originalNodeEnv = process.env.NODE_ENV;
 
   afterEach(() => {

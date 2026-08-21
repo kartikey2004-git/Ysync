@@ -5,8 +5,7 @@ interface StoredEntry {
   expiresAt: number;
 }
 
-// RedisPresenceStore ka in-memory version hai, same contract follow karta hai —
-// tests aur loadtest script isko use karte hain taaki real Redis chalane ki zaroorat na pade.
+// In-memory version of RedisPresenceStore, following the same contract — used by tests and the loadtest script so they don't need to run a real Redis.
 export class InMemoryPresenceStore implements PresenceStore {
   private readonly docs = new Map<string, Map<string, StoredEntry>>();
 
@@ -27,7 +26,7 @@ export class InMemoryPresenceStore implements PresenceStore {
     const byReplica = this.docs.get(docId);
     if (!byReplica) return [];
     const now = Date.now();
-    // yahan sirf filter kar rahe hain, delete nahi — actual cleanup sweep() ka kaam hai
+    // just filtering here, not deleting — actual cleanup is sweep()'s job
     return [...byReplica.values()].filter((stored) => stored.expiresAt > now).map((stored) => stored.entry);
   }
 

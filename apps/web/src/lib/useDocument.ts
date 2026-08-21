@@ -10,24 +10,22 @@ export interface UseDocumentResult {
   snapshot: DocumentClientSnapshot;
 }
 
-// DocumentClient ke liye React binding hai. Client browser-only hai (WebSocket +
-// IndexedDB), isliye isko effect ke andar banate hain — render body mein kabhi
-// nahi, chahe typeof window se guard bhi kar lo — taaki client ka pehla
-// (pre-hydration) render server ke null se exactly match kare. Render ke
-// dauraan eagerly banane se real hydration mismatch aaya tha (server null
-// branch render karta hai, client ke pehle pass mein already non-null client
-// tha) — yeh bug sirf browser mein app chala ke pakda gaya tha, build pass
-// hone se pata hi nahi chalta.
+// React binding for DocumentClient. The client is browser-only (WebSocket +
+// IndexedDB), so it's built inside an effect — never in the render body, even guarded
+// by typeof window — so the client's first (pre-hydration) render exactly matches the
+// server's null. Building it eagerly during render caused a real hydration mismatch
+// (the server renders the null branch, but the client's first pass already had a
+// non-null client) — this bug only showed up running the app in a browser, a build pass wouldn't catch it.
 export function useDocument(docId: string): UseDocumentResult {
   const [client, setClient] = useState<DocumentClient | null>(null);
 
   useEffect(() => {
     const instance = new DocumentClient(docId, WS_URL);
-    // yeh setState effect ke andar hi hona chahiye — instance render body mein bana hi nahi sakte (upar wajah likhi hai)
+    // this setState has to stay inside the effect — the instance can't be built in the render body (reason above)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setClient(instance);
 
-    // docId badalne ya component unmount hone pe purana WS connection band karo, leak nahi hone dena
+    // close the old WS connection when docId changes or the component unmounts, don't leak it
     return () => {
       instance.dispose();
       setClient(null);

@@ -8,7 +8,7 @@ const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 
 async function isRedisReachable(url: string): Promise<boolean> {
   const client = new Redis(url, { lazyConnect: true, retryStrategy: () => null, connectTimeout: 500 });
-  client.on("error", () => {}); // sirf reachability check kar rahe hain; connect fail hona yahan expected hai, crash nahi
+  client.on("error", () => {}); // just checking reachability here; a failed connect is expected, not a crash
   try {
     await client.connect();
     await client.quit();
@@ -25,10 +25,9 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Real ioredis-backed adapters ko live Redis ke against test karta hai, baaki
-// jagah wale in-memory-fake tests ka counterpart hai. REDIS_URL pe Redis
-// reachable nahi hai toh skip ho jayega, fail nahi — taaki npm test ke liye
-// Docker/Redis chalana zaroori na ho.
+// Tests the real ioredis-backed adapters against a live Redis — the counterpart to the
+// in-memory-fake tests everywhere else. Skips rather than fails if Redis isn't reachable
+// at REDIS_URL, so running Docker/Redis isn't required for npm test.
 describe.skipIf(!redisAvailable)("Redis-backed adapters (requires a live Redis at REDIS_URL)", () => {
   test("RedisPubSubBus delivers a publish to an independently-subscribed connection", async () => {
     const publisher = new RedisPubSubBus(REDIS_URL);
@@ -39,9 +38,9 @@ describe.skipIf(!redisAvailable)("Redis-backed adapters (requires a live Redis a
     const received = new Promise<string>((resolve) => {
       resolveReceived = resolve;
     });
-    // fixed sleep lagane ke bajaye subscribe() ko hi await karo (ioredis SUBSCRIBE
-    // ack hone ke baad hi resolve karta hai) — blind sleep hi wajah thi jisse
-    // yeh test Docker Desktop/WSL2 ke port-forward warm-up mein flaky hota tha
+    // await subscribe() itself instead of a fixed sleep (ioredis resolves it only after
+    // the SUBSCRIBE ack) — a blind sleep was exactly what made this test flaky during
+    // Docker Desktop/WSL2's port-forward warm-up
     await subscriber.subscribe(channel, (message) => resolveReceived(message));
     await publisher.publish(channel, "hello");
 
@@ -70,7 +69,7 @@ describe.skipIf(!redisAvailable)("Redis-backed adapters (requires a live Redis a
 
     await subscriber.unsubscribe(channel);
     await publisher.publish(channel, "second");
-    await wait(200); // yahan message *na aana* confirm karna hai, iske liye bounded wait genuinely chahiye
+    await wait(200); // confirming a message *doesn't* arrive genuinely needs a bounded wait here
 
     expect(messages).toEqual(["first"]);
 
@@ -85,7 +84,7 @@ describe.skipIf(!redisAvailable)("Redis-backed adapters (requires a live Redis a
     await store.set(docId, { replicaId: "alice", cursor: 3 }, 10_000);
     expect(await store.list(docId)).toEqual([{ replicaId: "alice", cursor: 3 }]);
 
-    await store.set(docId, { replicaId: "bob", cursor: 1 }, 10); // bob ka 10ms TTL — jaldi expire hoga sweep test ke liye
+    await store.set(docId, { replicaId: "bob", cursor: 1 }, 10); // bob's 10ms TTL — expires quickly for the sweep test
     await wait(50);
     const expired = await store.sweep(docId);
     expect(expired).toEqual(["bob"]);

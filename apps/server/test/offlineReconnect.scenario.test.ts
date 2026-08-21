@@ -8,8 +8,8 @@ import { InMemoryPersistenceStore } from "../src/persistence/InMemoryPersistence
 
 const ALPHABET = "abcdefghij";
 const REPLICA_IDS = ["alice", "bob", "carol", "dave"];
-// 4 clients x >=65 edits se >= 260 total guarantee ho jata hai, worst case
-// (4 * 65 = 260) mein bhi neeche wale 250 floor se aaraam se upar rahega
+// 4 clients x >=65 edits guarantees >= 260 total, comfortably above the 250 floor
+// checked below even in the worst case (4 * 65 = 260)
 const MIN_EDITS_PER_CLIENT = 65;
 const MAX_EDITS_PER_CLIENT = 75;
 const DELETE_PROBABILITY = 0.15;
@@ -20,10 +20,9 @@ interface SimulatedClient {
   outbox: Op[];
 }
 
-// client ke apne Rga pe editCount local edits chalata hai, sab index 0 pe hi
-// conflict kar rahe hain — yeh sabse zyada conflicting case hai: har client
-// ka edit doosre sabke edit se exact same anchor pe concurrent hai. Yeh
-// offline phase hai, yahan RoomManager ko koi touch nahi karta.
+// Runs editCount local edits on a client's own Rga, all conflicting at index 0 — the
+// most conflicting case possible: every client's edit is concurrent with everyone
+// else's at the exact same anchor. This is the offline phase, RoomManager is never touched here.
 function editOffline(client: SimulatedClient, editCount: number): void {
   for (let i = 0; i < editCount; i++) {
     const currentLength = client.rga.read().length;
@@ -35,13 +34,12 @@ function editOffline(client: SimulatedClient, editCount: number): void {
   }
 }
 
-// Kai clients offline rehte hue same document concurrently edit karte hain,
-// phir reconnect hote hain — yeh test simulate karta hai. RoomManager ko
-// directly drive karta hai (WS/browser nahi), apps/web ka DocumentClient
-// reuse nahi kiya kyunki usko real WebSocket + IndexedDB chahiye; yahan
-// verify yeh ho raha hai ki server integration (seq assignment, persistence,
-// batching) wahi CRDT convergence guarantee todhta nahi jo packages/crdt
-// ka property test algorithm ke liye alag se prove kar chuka hai.
+// Simulates several clients editing the same document concurrently while offline,
+// then reconnecting. Drives RoomManager directly (no WS/browser) — apps/web's
+// DocumentClient isn't reused here since it needs a real WebSocket + IndexedDB; what's
+// being verified is that the server integration (seq assignment, persistence,
+// batching) doesn't break the same CRDT convergence guarantee that packages/crdt's
+// property test already proves separately for the algorithm.
 describe("offline concurrent edits reconcile with zero data loss on reconnect", () => {
   test("N clients editing offline concurrently converge and lose nothing", async () => {
     const persistenceStore = new InMemoryPersistenceStore();
@@ -70,7 +68,7 @@ describe("offline concurrent edits reconcile with zero data loss on reconnect", 
     const insertCount = clients.reduce((sum, c) => sum + c.outbox.filter((op) => op.type === "insert").length, 0);
     expect(totalEdits).toBeGreaterThanOrEqual(250);
 
-    // "reconnect": har client ka offline outbox ek-ek karke server pe flush karo
+    // "reconnect": flush each client's offline outbox to the server, one at a time
     for (const client of clients) {
       await roomManager.applyClientOp(docId, client.replicaId, client.outbox);
     }
@@ -78,12 +76,12 @@ describe("offline concurrent edits reconcile with zero data loss on reconnect", 
     const room = await roomManager.getOrCreateRoom(docId);
     const serverSnapshot = room.snapshot();
 
-    // Zero data loss: jitne bhi insert kabhi hue, sab node ke roop mein hisab
-    // mein hain (visible ya tombstoned) — delete sirf tombstone karta hai, node hatata nahi.
+    // Zero data loss: every insert that ever happened is accounted for as a node
+    // (visible or tombstoned) — delete only tombstones, it never removes a node.
     expect(serverSnapshot).toHaveLength(insertCount);
 
-    // Convergence: ek independent observer wahi ops pure Rga.apply se laga ke
-    // (RoomManager ko chhue bina) bilkul wahi document banana chahiye jo server ne banaya.
+    // Convergence: an independent observer applying the same ops through plain
+    // Rga.apply (never touching RoomManager) should build the exact same document the server did.
     const observer = new Rga("observer");
     for (const client of clients) {
       observer.applyAll(client.outbox);

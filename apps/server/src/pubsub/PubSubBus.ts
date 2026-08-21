@@ -1,10 +1,6 @@
-// Cross-process fan-out ke liye transport. RoomManager apne room ke local
-// ops/presence updates yahan publish karta hai, aur usi channel pe subscribed
-// har process (production mein same Redis ke peeche baaki instances bhi)
-// ko subscribe wale handler mein deliver ho jata hai.
-//
-// Interface isliye rakha hai taaki RoomManager ka multi-instance fan-out logic
-// har test run mein real Redis maange bina in-process fake se test ho sake.
+// Transport for cross-process fan-out. RoomManager publishes its room's local ops/presence updates here, and every process subscribed to that channel (in production, the other instances behind the same Redis) gets it delivered to their subscribe handler.
+
+// This is an interface so RoomManager's multi-instance fan-out logic can be tested with an in-process fake instead of requiring a real Redis on every test run.
 export interface PubSubBus {
   publish(channel: string, message: string): Promise<void>;
   subscribe(channel: string, handler: (message: string) => void): Promise<void>;

@@ -7,12 +7,11 @@ import { RoomManager, type RoomManagerOptions } from "./roomManager.js";
 import { logger, errorMeta } from "./logger.js";
 
 export interface CreateServerOptions extends RoomManagerOptions {
-  // unset/empty rehta hai toh origin check disabled — koi breaking change
-  // nahi bina opt-in ke (BUG-008)
+  // left unset/empty, origin checking stays disabled, no breaking change without an opt-in
   allowedOrigins?: string[];
 }
 
-const MAX_WS_PAYLOAD_BYTES = 1_048_576; // 1 MiB — realistic edit batches se kaafi upar, phir bhi bounded (BUG-007)
+const MAX_WS_PAYLOAD_BYTES = 1_048_576; // 1 MiB well above realistic edit batches, but still bounded
 
 export interface YSyncServer {
   httpServer: http.Server;
@@ -30,9 +29,7 @@ function sendError(socket: WebSocket, code: string, message: string): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(payload));
 }
 
-// Yahan WS upgrade aur per-socket message dispatch wire hota hai. Stores
-// RoomManagerOptions se aate hain isliye tests real Redis/Postgres ki jagah
-// in-memory fakes daal sakte hain, is file ko touch kiye bina.
+// Wires up the WS upgrade and per-socket message dispatch. Stores come in through RoomManagerOptions so tests can swap in in-memory fakes instead of real Redis/Postgres
 export function createServer(options: CreateServerOptions): YSyncServer {
   const roomManager = new RoomManager(options);
   const app = express();
@@ -45,8 +42,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
   const wss = new WebSocketServer({
     server: httpServer,
     maxPayload: MAX_WS_PAYLOAD_BYTES,
-    // allowedOrigins configured na ho toh sab origins allow karo — sirf
-    // opt-in hone pe hi enforce hota hai
+    // allow every origin when allowedOrigins isn't configured, enforcement only kicks in when opted into
     verifyClient: allowedOrigins?.length
       ? (info, callback) => {
           if (info.origin && allowedOrigins.includes(info.origin)) {
@@ -60,6 +56,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
   });
   const socketState = new WeakMap<WebSocket, SocketState>();
 
+  // single entry point for every inbound message on a socket, validates first, then routes by type, so nothing downstream ever sees untrusted/malformed input
   async function dispatchMessage(connectionId: string, socket: WebSocket, raw: string): Promise<void> {
     let json: unknown;
     try {
@@ -81,7 +78,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     const state = socketState.get(socket);
 
     if (message.type === "join") {
-      // ek socket sirf ek baar join kar sakta hai — dusri baar join aaya matlab client ne galti se resend kiya
+      // a socket can only join once, a second join means the client resent by mistake
       if (state) {
         sendError(socket, "ALREADY_JOINED", "this connection already joined a document");
         return;
@@ -109,12 +106,12 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       return;
     }
 
-    // join se pehle kuch bhi bhejo toh reject — server ko pata hi nahi kaunsa doc/replica hai
+    // reject anything sent before join, the server doesn't know which doc/replica this is yet
     if (!state) {
       sendError(socket, "NOT_JOINED", "send a join message before anything else");
       return;
     }
-    // ek connection ek hi doc ke liye — dusre docId ka op/presence aaya toh galat client state hai
+    // one connection is scoped to one doc, an op/presence for a different docId means bad client state
     if (message.docId !== state.docId) {
       sendError(socket, "WRONG_DOC", "this connection is joined to a different document");
       return;
@@ -146,9 +143,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     }
   }
 
-  // dispatchMessage ka error yahin pe pakadna zaroori hai — Node 15+ mein unhandled
-  // rejection se pura process crash ho jata hai, aur is instance ke saare clients
-  // disconnect ho jayenge, sirf jisne error diya wahi nahi.
+  // errors from dispatchMessage must be caught right here, on Node 15+ an unhandled rejection crashes the whole process, disconnecting every client on this instance, not just the one that triggered the error
   async function handleMessage(connectionId: string, socket: WebSocket, raw: string): Promise<void> {
     try {
       await dispatchMessage(connectionId, socket, raw);
@@ -157,7 +152,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       try {
         sendError(socket, "INTERNAL_ERROR", "the server hit an unexpected error handling your message");
       } catch (sendErr) {
-        // socket pehle hi band ho chuka ho sakta hai, isliye yeh bhi fail ho sakta hai — bas log kar do
+        // the socket may already be closed, so this can fail too, just log it
         logger.error("failed to send INTERNAL_ERROR to socket", { connectionId, error: errorMeta(sendErr) });
       }
     }
@@ -174,7 +169,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       const state = socketState.get(socket);
       logger.info("ws connection closed", { connectionId, docId: state?.docId, replicaId: state?.replicaId });
       if (state) {
-        // yeh .catch zaroori hai — close event ke andar promise reject hone do toh unhandled rejection ban jayega
+        // this is required letting a promise reject inside a close event handler becomes an unhandled rejection
         roomManager.leave(state.docId, state.replicaId, socket).catch((err: unknown) => {
           logger.error("roomManager.leave failed on close", {
             connectionId,
@@ -185,8 +180,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         });
       }
     });
-    // yeh listener na ho toh koi bhi random connection reset (proxy hiccup,
-    // client ka network switch, kuch bhi) unhandled throw karke pura process gira dega
+    // without this listener, any random connection reset (proxy hiccup, client network, anything) throws unhandled and takes down the whole process
     socket.on("error", (err) => {
       const state = socketState.get(socket);
       logger.warn("ws connection error", {

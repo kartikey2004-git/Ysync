@@ -28,9 +28,8 @@ function insertOp(
   return { type: "insert", id: { counter, replicaId }, originId, value };
 }
 
-// Real Prisma/Postgres wale adapter ko test karta hai, persistence.inMemory.test.ts
-// ka counterpart hai. Agar DATABASE_URL pe Postgres reachable nahi hai toh
-// fail nahi, skip karta hai.
+// Tests the real Prisma/Postgres adapter, the counterpart to
+// persistence.inMemory.test.ts. Skips rather than fails if Postgres isn't reachable at DATABASE_URL.
 describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Postgres at DATABASE_URL)", () => {
   test("appendOps then load() round-trips through real Postgres", async () => {
     const store = new PrismaPersistenceStore(DATABASE_URL);
@@ -82,19 +81,19 @@ describe.skipIf(!postgresAvailable)("PrismaPersistenceStore (requires a live Pos
     await store.close();
   });
 
-  test("document.latestSeq never regresses even if a lower-seq appendOps commits after a higher one (BUG-006)", async () => {
+  test("document.latestSeq never regresses even if a lower-seq appendOps commits after a higher one", async () => {
     const store = new PrismaPersistenceStore(DATABASE_URL);
     const docId = `test-doc-${Date.now()}-d`;
 
-    // real usage mein yeh do alag concurrent applyClientOp calls (do senders) se
-    // aate — Redis INCR seq allocation ka order guarantee karta hai, transaction
-    // commit ka nahi. Yahan hum sirf woh out-of-order commit sequence directly
-    // simulate kar rahe hain: pehle higher seq commit, phir lower seq.
+    // in real usage this would come from two separate concurrent applyClientOp calls
+    // (two senders) — Redis INCR guarantees the order of seq allocation, not of
+    // transaction commit. Here we simulate that out-of-order commit sequence directly:
+    // the higher seq commits first, then the lower one.
     await store.appendOps(docId, 5, [insertOp(5, "alice", "e")]);
     await store.appendOps(docId, 3, [insertOp(3, "alice", "c")]);
 
     const loaded = await store.load(docId);
-    expect(loaded.latestSeq).toBe(5); // GREATEST se protect hona chahiye, 3 pe regress nahi hona chahiye
+    expect(loaded.latestSeq).toBe(5); // GREATEST should protect this — it shouldn't regress to 3
 
     await store.close();
   });

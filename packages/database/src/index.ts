@@ -1,4 +1,4 @@
-// generated Prisma client ke public bits re-export karta hai, taaki consumers ko kabhi ../generated se directly import na karna pade
+// re-exports the public bits of the generated Prisma client so consumers never import directly from ../generated
 export { createPrismaClient } from "./client.js";
 export { PrismaClient, Prisma } from "../generated/prisma/client.js";
 export type { Document, Operation, Snapshot } from "../generated/prisma/client.js";

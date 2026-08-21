@@ -1,26 +1,16 @@
-// Storage-growth benchmark hai. Test nahi, sirf report hai. Run karo:
+// Storage-growth benchmark. Not a test, just a report. Run with:
 //
 //   npm run benchmark:storage -w apps/server
 //
-// Snapshot+GC cycle (RoomManager ka snapshotOpThreshold tick,
-// PersistenceStore#writeSnapshot jo purane Operation rows delete karta hai)
-// se asal mein Operation table ka row count bound hota hai kisi bhi waqt —
-// total historical edit count nahi. GC ke bina woh table har op ke liye ek
-// row rakhega, hamesha ke liye badhta rahega. GC ke saath, kitna bhi
-// edit history ho, ek document ke liye kabhi snapshotOpThreshold se zyada
-// rows nahi hongi. Yeh script yehi seedha dikhata hai: O(1)-vs-O(N)
-// row-count bound hai, koi fuzzy byte ratio nahi.
-//
-// Yeh chhota, secondary effect bhi report karta hai — ek hi snapshot ke
-// andar tombstone payloads compact karna (deleted node ka value/attrs null
-// karna). Yeh real hai par yahan modest hai — neeche note mein wajah hai —
-// aur storage-growth claim ka main mechanism yeh nahi hai.
+// The snapshot+GC cycle (RoomManager's snapshotOpThreshold tick, PersistenceStore#writeSnapshot deleting the old Operation rows) is what actually bounds the Operation table's row count at any given moment — not the total historical edit count. Without GC, that table would keep one row per op forever, growing without bound. With GC, no matter how much edit history exists, a document's rows never exceed snapshotOpThreshold. This script demonstrates exactly that: an O(1)-vs-O(N) row-count bound, not some fuzzy byte ratio.
+
+// It also reports a smaller, secondary effect — compacting tombstone payloads within a single snapshot (nulling a deleted node's value/attrs). That's real but modest here — see the note below for why — and it isn't the main mechanism behind the storage-growth claim.
 import { Rga } from "@ysync/crdt";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz     ";
-const SNAPSHOT_OP_THRESHOLD = 500; // RoomManagerOptions.snapshotOpThreshold jaisa hi rakha hai
-const SESSIONS = 20; // simulated snapshot cycles — isko badhao toh total edit history bhi badh jayegi
-const BACKSPACE_PROBABILITY = 0.12; // kitne keystrokes correction hain, naya content nahi
+const SNAPSHOT_OP_THRESHOLD = 500; // kept in sync with RoomManagerOptions.snapshotOpThreshold
+const SESSIONS = 20; // simulated snapshot cycles — raise this to grow the total edit history
+const BACKSPACE_PROBABILITY = 0.12; // how many keystrokes are corrections rather than new content
 
 function randomChar(): string {
   return ALPHABET[Math.floor(Math.random() * ALPHABET.length)] as string;
@@ -44,17 +34,13 @@ function main(): void {
   for (let session = 1; session <= SESSIONS; session++) {
     runOpsUntilThreshold(rga, SNAPSHOT_OP_THRESHOLD);
     totalOpsEverGenerated += SNAPSHOT_OP_THRESHOLD;
-    // yahan snapshot+GC fire hota hai: writeSnapshot() seq <= atSeq wali har
-    // Operation row delete kar deta hai. Is document ka row count wapas 0 pe
-    // gir jata hai aur agle snapshot tak SNAPSHOT_OP_THRESHOLD se zyada nahi badhega,
-    // chahe session kitna bhi ho
+    // this is where snapshot+GC fires: writeSnapshot() deletes every Operation row with seq <= atSeq. This document's row count drops back to 0 and won't grow past SNAPSHOT_OP_THRESHOLD before the next snapshot, no matter how many sessions have run
     rga.compactTombstones();
   }
 
   const finalLength = rga.read().length;
 
-  console.log("YSync storage-growth benchmark");
-  console.log("================================");
+  console.log("YSync storage-growth benchmark");  
   console.log(`snapshot cycles simulated: ${SESSIONS} (snapshotOpThreshold = ${SNAPSHOT_OP_THRESHOLD})`);
   console.log(`final visible document length: ${finalLength} characters`);
   console.log("");
@@ -67,14 +53,7 @@ function main(): void {
       `stays exactly ${SNAPSHOT_OP_THRESHOLD} — that's the O(1)-vs-O(N) property, not a fixed percentage.`,
   );
 
-  // Secondary chhota effect: ek hi snapshot ke andar tombstone *payloads* compact
-  // karna. Single-character values ke liye modest hi hai — node ka value null
-  // karna (`null`, 4 bytes) ek nulled single-char string (jaise `"a"`, 3 bytes)
-  // se meaningfully chhota nahi hai, isliye yahan zyada bachat nahi hoti.
-  // `attrs` payloads ya multi-character values mein zyada fark padta hai. Yeh
-  // project dead tombstone nodes ko structurally remove nahi karta (kar bhi
-  // nahi sakta — baad ka insert usko origin ke taur pe reference kar sakta hai),
-  // isliye yeh upar wale row-count bound ka mechanism nahi hai.
+  // Secondary, smaller effect: compacting tombstone *payloads* within a single snapshot. This is modest for single-character values — nulling a node's value (`null`, 4 bytes) isn't meaningfully smaller than a nulled single-char string (e.g. `"a"`, 3 bytes), so there isn't much saved here. It makes more of a difference for `attrs` payloads or multi-character values. This project doesn't structurally remove dead tombstone nodes (it can't — a later insert may still reference one as an origin), so this isn't the mechanism behind the row-count bound above.
   const single = new Rga("benchmark-replica-single-cycle");
   runOpsUntilThreshold(single, SNAPSHOT_OP_THRESHOLD);
   const beforeCompaction = JSON.stringify(single.toSnapshot()).length;
