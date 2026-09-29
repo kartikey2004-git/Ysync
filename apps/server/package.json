@@ -10,12 +10,16 @@
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "benchmark:storage": "tsx scripts/storageGrowthBenchmark.ts",
-    "benchmark:latency": "tsx scripts/loadTest.ts"
+    "benchmark:latency": "tsx scripts/loadTest.ts",
+    "benchmark:ramp": "tsx scripts/loadTestRamp.ts"
   },
   "dependencies": {
-    "@ysync/crdt": "0.1.0",
-    "@ysync/database": "0.1.0",
-    "@ysync/protocol": "0.1.0",
+    "@ysync/crdt": "workspace:*",
+    "@ysync/database": "workspace:*",
+    "@ysync/protocol": "workspace:*",
+    "better-auth": "^1.7.6",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.4",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "tsx": "^4.19.1",
@@ -23,6 +27,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/ws": "^8.5.12",
     "typescript": "^5.5.4",

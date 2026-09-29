@@ -16,7 +16,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ysync/crdt": "0.1.0",
+    "@ysync/crdt": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

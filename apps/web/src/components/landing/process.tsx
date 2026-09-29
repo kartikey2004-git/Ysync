@@ -1,19 +1,31 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
 import { Step, steps } from "@/lib/landing-data";
 
 export default function ProcessSection() {
   return (
-    <section className="bg-black text-white">
+    <section className="bg-white">
       <div className="w-full px-4 py-24 sm:px-6 lg:px-10">
-        <div className="mx-auto flex max-w-6xl flex-wrap justify-center gap-6">
-          {steps.map((step) => (
-            <div
-              key={step.id}
-              className="w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]"
-            >
-              <SignalCard step={step} />
+        {/* header */}
+        <div className="mx-auto mb-14 max-w-6xl">
+          <div className="mb-5 inline-flex items-center border border-neutral-200 bg-neutral-50 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.25em] text-neutral-500">
+            How it works
+          </div>
+          <h2 className="max-w-xl text-3xl font-medium tracking-tight text-black md:text-4xl">
+            From your keystroke to every replica, in five steps.
+          </h2>
+        </div>
+
+        {/* 3 + 2 bento */}
+        <div className="mx-auto grid max-w-6xl grid-cols-1 gap-px bg-neutral-200 md:grid-cols-6">
+          {steps.slice(0, 3).map((step) => (
+            <div key={step.id} className="bg-white md:col-span-2">
+              <StepCard step={step} />
+            </div>
+          ))}
+          {steps.slice(3, 5).map((step) => (
+            <div key={step.id} className="bg-white md:col-span-3">
+              <StepCard step={step} wide />
             </div>
           ))}
         </div>
@@ -22,71 +34,49 @@ export default function ProcessSection() {
   );
 }
 
-function SignalCard({ step }: { step: Step }) {
+function StepCard({ step, wide = false }: { step: Step; wide?: boolean }) {
   const Icon = step.icon;
   const stepIndex = steps.findIndex((s) => s.id === step.id);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden border border-white/10 bg-white/[0.03] p-8">
-      <div className="relative flex items-center justify-between">
-        <div className="flex h-11 w-11 items-center justify-center border border-white/10 bg-white/5">
-          <Icon className="h-5 w-5 text-white" />
+    <div className={`flex h-full flex-col p-8 ${wide ? "md:flex-row md:gap-12" : ""}`}>
+      {/* left col in wide mode */}
+      <div className={wide ? "md:w-56 md:shrink-0" : ""}>
+        {/* step number + icon */}
+        <div className="mb-8 flex items-center justify-between">
+          <div className="flex h-10 w-10 items-center justify-center border border-neutral-200 bg-neutral-50">
+            <Icon className="h-4 w-4 text-neutral-700" />
+          </div>
+          <span className="font-mono text-[11px] tracking-[0.18em] text-neutral-400">
+            {String(step.id).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}
+          </span>
         </div>
-        <span className="font-mono text-xs tracking-[0.2em] text-white/40">
-          {String(step.id).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}
-        </span>
+
+        <h3 className="text-xl font-medium tracking-tight text-black">
+          {step.title}
+        </h3>
+
+        {/* tags */}
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {step.tags.map((tag) => (
+            <span
+              key={tag}
+              className="border border-neutral-200 px-2.5 py-0.5 text-[11px] font-medium text-neutral-500"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div className="relative mt-8">
-        <div className="mb-3 inline-flex items-center gap-2 border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
-          <Sparkles className="h-3 w-3" />
-          {step.panelTitle}
-        </div>
-        <h3 className="text-2xl font-medium tracking-tight">{step.title}</h3>
-        <p className="mt-4 leading-relaxed text-white/60">
+      {/* description */}
+      <div className={`mt-6 ${wide ? "md:mt-0 md:flex-1" : ""}`}>
+        <p className="text-sm leading-relaxed text-neutral-500">
           {step.panelDescription}
         </p>
-      </div>
-
-      <div className="relative mt-8 flex flex-wrap gap-2">
-        {step.tags.map((tag) => (
-          <span
-            key={tag}
-            className="border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className="relative mt-auto pt-10">
-        <div className="border-t border-white/10 pt-6">
-          <div className="flex items-center">
-            {steps.map((s, i) => {
-              const isDone = i < stepIndex;
-              const isCurrent = i === stepIndex;
-              return (
-                <div key={s.id} className="flex flex-1 items-center last:flex-none">
-                  <div
-                    className={`h-2 w-2 shrink-0 transition-colors ${
-                      isDone || isCurrent ? "bg-white" : "bg-white/15"
-                    }`}
-                  />
-                  {i < steps.length - 1 && (
-                    <div
-                      className={`mx-1.5 h-px flex-1 transition-colors ${
-                        isDone ? "bg-white/50" : "bg-white/10"
-                      }`}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-white/40">
-            Stage {step.id} of {steps.length}
-          </p>
-        </div>
+        <p className="mt-2 text-[11px] text-neutral-400">
+          Stage {step.id} of {steps.length}
+        </p>
       </div>
     </div>
   );

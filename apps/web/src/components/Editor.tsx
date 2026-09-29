@@ -13,6 +13,7 @@ Quill.register("modules/cursors", QuillCursors);
 
 interface EditorProps {
   client: DocumentClient;
+  readOnly?: boolean;
 }
 
 // a selection's {anchor, head} can be in either order (the user can select right-to-left too) — Quill/quill-cursors always need {index, length}
@@ -26,7 +27,7 @@ function toQuillRange(
 }
 
 // The binding between Quill and the CRDT. Local user edits go straight through deltaToEdits into client.applyLocalEdits as one batch — Quill has already applied the edit to its own document, so nothing needs to be written back to Quill on that path, and notifying in between would race the remote-sync path below against a half-applied edit. Remote/reconciled changes come in as a Delta diff (quill.updateContents), never a full setContents replace, so the local cursor doesn't jump.
-export function Editor({ client }: EditorProps) {
+export function Editor({ client, readOnly = false }: EditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -39,14 +40,10 @@ export function Editor({ client }: EditorProps) {
     container.appendChild(editorEl);
     const quill = new Quill(editorEl, {
       theme: "snow",
+      readOnly,
       modules: {
         cursors: true,
-        // restricted to the boolean marks @ysync/crdt's FormatMark actually models
-        // (see deltaToEdits.ts) — Quill's full default toolbar includes non-boolean
-        // attributes (headers, lists, colors, links, alignment...) that would visually
-        // apply and then silently revert on the next sync, same failure mode this
-        // toolbar exists to avoid.
-        toolbar: [["bold", "italic", "underline", "strike"]],
+        toolbar: readOnly ? false : [["bold", "italic", "underline", "strike"]],
       },
     });
     const cursors = quill.getModule("cursors") as QuillCursors;

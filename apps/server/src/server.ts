@@ -1,17 +1,26 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import express from "express";
+import cors from "cors";
 import { WebSocketServer, type WebSocket } from "ws";
+import { toNodeHandler } from "better-auth/node";
 import { parseClientMessage, type ErrorMessage, type ServerMessage } from "@ysync/protocol";
 import { RoomManager, type RoomManagerOptions } from "./roomManager.js";
 import { logger, errorMeta } from "./logger.js";
+import type { Auth } from "./auth/betterAuth.js";
+import type { AuthorizationService } from "./auth/authorizationService.js";
+import { authenticateWsUpgrade } from "./auth/wsAuth.js";
+import { createDocumentRouter } from "./routes/documents.js";
+import type { PrismaClient } from "@ysync/database";
 
 export interface CreateServerOptions extends RoomManagerOptions {
-  // left unset/empty, origin checking stays disabled, no breaking change without an opt-in
   allowedOrigins?: string[];
+  auth?: Auth;
+  authorizationService?: AuthorizationService;
+  prisma?: PrismaClient;
 }
 
-const MAX_WS_PAYLOAD_BYTES = 1_048_576; // 1 MiB well above realistic edit batches, but still bounded
+const MAX_WS_PAYLOAD_BYTES = 1_048_576;
 
 export interface YSyncServer {
   httpServer: http.Server;
@@ -22,6 +31,9 @@ export interface YSyncServer {
 interface SocketState {
   docId: string;
   replicaId: string;
+  userId: string;
+  sessionId: string;
+  canWrite: boolean;
 }
 
 function sendError(socket: WebSocket, code: string, message: string): void {
@@ -29,34 +41,82 @@ function sendError(socket: WebSocket, code: string, message: string): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(payload));
 }
 
-// Wires up the WS upgrade and per-socket message dispatch. Stores come in through RoomManagerOptions so tests can swap in in-memory fakes instead of real Redis/Postgres
 export function createServer(options: CreateServerOptions): YSyncServer {
-  const roomManager = new RoomManager(options);
+  const { auth, authorizationService, prisma, allowedOrigins, ...roomManagerOpts } = options;
+  const roomManager = new RoomManager(roomManagerOpts);
   const app = express();
+
+  // CORS — must come before routes, credentials required for session cookies
+  const corsOrigins = allowedOrigins?.length ? allowedOrigins : undefined;
+  app.use(cors({
+    origin: corsOrigins ?? true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  }));
+
+  // Better Auth handler — must come BEFORE express.json() per Better Auth docs
+  if (auth) {
+    app.all("/api/auth/*", toNodeHandler(auth));
+  }
+
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
 
+  // Document CRUD + member management
+  if (prisma && authorizationService && auth) {
+    app.use("/api/documents", createDocumentRouter(prisma, authorizationService, auth));
+  }
+
   const httpServer = http.createServer(app);
-  const allowedOrigins = options.allowedOrigins;
-  const wss = new WebSocketServer({
-    server: httpServer,
-    maxPayload: MAX_WS_PAYLOAD_BYTES,
-    // allow every origin when allowedOrigins isn't configured, enforcement only kicks in when opted into
-    verifyClient: allowedOrigins?.length
-      ? (info, callback) => {
-          if (info.origin && allowedOrigins.includes(info.origin)) {
-            callback(true);
-            return;
-          }
-          logger.warn("rejected ws connection: origin not allowed", { origin: info.origin || "(missing)" });
-          callback(false, 403, "origin not allowed");
-        }
-      : undefined,
-  });
+
   const socketState = new WeakMap<WebSocket, SocketState>();
 
-  // single entry point for every inbound message on a socket, validates first, then routes by type, so nothing downstream ever sees untrusted/malformed input
+  // When auth is configured, use noServer mode for authenticated WS upgrades.
+  // Without auth (legacy/test mode), attach directly to httpServer.
+  const wss = auth
+    ? new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES })
+    : new WebSocketServer({
+        server: httpServer,
+        maxPayload: MAX_WS_PAYLOAD_BYTES,
+        verifyClient: allowedOrigins?.length
+          ? (info, callback) => {
+              if (info.origin && allowedOrigins.includes(info.origin)) { callback(true); return; }
+              logger.warn("rejected ws connection: origin not allowed", { origin: info.origin || "(missing)" });
+              callback(false, 403, "origin not allowed");
+            }
+          : undefined,
+      });
+
+  if (auth) {
+    httpServer.on("upgrade", async (req, socket, head) => {
+      if (allowedOrigins?.length) {
+        const origin = req.headers.origin;
+        if (!origin || !allowedOrigins.includes(origin)) {
+          logger.warn("rejected ws upgrade: origin not allowed", { origin: origin || "(missing)" });
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      }
+
+      const authResult = await authenticateWsUpgrade(auth, req);
+      if (!authResult) {
+        logger.warn("rejected ws upgrade: no valid session");
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        (ws as WebSocket & { __authUserId: string; __authSessionId: string }).__authUserId = authResult.userId;
+        (ws as WebSocket & { __authSessionId: string }).__authSessionId = authResult.sessionId;
+        wss.emit("connection", ws, req);
+      });
+    });
+  }
+
   async function dispatchMessage(connectionId: string, socket: WebSocket, raw: string): Promise<void> {
     let json: unknown;
     try {
@@ -78,56 +138,102 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     const state = socketState.get(socket);
 
     if (message.type === "join") {
-      // a socket can only join once, a second join means the client resent by mistake
       if (state) {
         sendError(socket, "ALREADY_JOINED", "this connection already joined a document");
         return;
       }
+
+      const authSocket = socket as WebSocket & { __authUserId?: string; __authSessionId?: string };
+      const userId = authSocket.__authUserId ?? "";
+      const sessionId = authSocket.__authSessionId ?? "";
+
+      // When auth is configured, enforce document-level authorization
+      if (authorizationService && userId) {
+        const canRead = await authorizationService.canReadDocument(userId, message.docId);
+        if (!canRead) {
+          logger.warn("ws join denied: no access", { connectionId, userId, docId: message.docId });
+          sendError(socket, "FORBIDDEN", "you do not have access to this document");
+          socket.close(4003, "forbidden");
+          return;
+        }
+      }
+
+      const canWrite = authorizationService && userId
+        ? await authorizationService.canWriteDocument(userId, message.docId)
+        : true;
+
+      // Server-derived replicaId when auth is active
+      let replicaId: string;
+      if (userId) {
+        const clientReplicaId = message.replicaId;
+        const expectedPrefix = `${userId}:`;
+        replicaId = clientReplicaId.startsWith(expectedPrefix)
+          ? clientReplicaId
+          : `${userId}:${clientReplicaId}`;
+      } else {
+        replicaId = message.replicaId;
+      }
+
       logger.info("join received", {
         connectionId,
         docId: message.docId,
-        replicaId: message.replicaId,
+        userId: userId || "(unauthenticated)",
+        replicaId,
         sinceSeq: message.sinceSeq,
+        canWrite,
       });
-      const catchUp = await roomManager.join(message.docId, message.replicaId, socket, message.sinceSeq);
-      socketState.set(socket, { docId: message.docId, replicaId: message.replicaId });
+
+      const catchUp = await roomManager.join(message.docId, replicaId, socket, message.sinceSeq);
+      socketState.set(socket, { docId: message.docId, replicaId, userId, sessionId, canWrite });
+
       const reply: ServerMessage =
         catchUp.kind === "sync"
           ? { type: "sync", docId: message.docId, seq: catchUp.seq, ops: catchUp.ops }
           : { type: "snapshot", docId: message.docId, seq: catchUp.seq, state: catchUp.state };
       socket.send(JSON.stringify(reply));
+
       logger.info("join completed", {
         connectionId,
         docId: message.docId,
-        replicaId: message.replicaId,
+        replicaId,
         kind: catchUp.kind,
         seq: catchUp.seq,
       });
       return;
     }
 
-    // reject anything sent before join, the server doesn't know which doc/replica this is yet
     if (!state) {
       sendError(socket, "NOT_JOINED", "send a join message before anything else");
       return;
     }
-    // one connection is scoped to one doc, an op/presence for a different docId means bad client state
     if (message.docId !== state.docId) {
       sendError(socket, "WRONG_DOC", "this connection is joined to a different document");
       return;
     }
 
     if (message.type === "op") {
+      // Authorize: only OWNER and EDITOR can write
+      if (!state.canWrite) {
+        logger.warn("op rejected: viewer cannot write", {
+          connectionId,
+          docId: state.docId,
+          userId: state.userId,
+        });
+        sendError(socket, "FORBIDDEN", "you do not have write access to this document");
+        return;
+      }
       logger.info("operation received", {
         connectionId,
         docId: state.docId,
         replicaId: state.replicaId,
+        userId: state.userId,
         opCount: message.ops.length,
       });
       await roomManager.applyClientOp(state.docId, state.replicaId, message.ops);
       return;
     }
     if (message.type === "presence") {
+      // Presence uses server-derived identity, not client-supplied name
       await roomManager.updatePresence(state.docId, state.replicaId, {
         cursor: message.cursor,
         selection: message.selection,
@@ -137,13 +243,12 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       return;
     }
     if (message.type === "leave") {
-      logger.info("leave received", { connectionId, docId: state.docId, replicaId: state.replicaId });
+      logger.info("leave received", { connectionId, docId: state.docId, replicaId: state.replicaId, userId: state.userId });
       await roomManager.leave(state.docId, state.replicaId, socket);
       socketState.delete(socket);
     }
   }
 
-  // errors from dispatchMessage must be caught right here, on Node 15+ an unhandled rejection crashes the whole process, disconnecting every client on this instance, not just the one that triggered the error
   async function handleMessage(connectionId: string, socket: WebSocket, raw: string): Promise<void> {
     try {
       await dispatchMessage(connectionId, socket, raw);
@@ -152,7 +257,6 @@ export function createServer(options: CreateServerOptions): YSyncServer {
       try {
         sendError(socket, "INTERNAL_ERROR", "the server hit an unexpected error handling your message");
       } catch (sendErr) {
-        // the socket may already be closed, so this can fail too, just log it
         logger.error("failed to send INTERNAL_ERROR to socket", { connectionId, error: errorMeta(sendErr) });
       }
     }
@@ -160,16 +264,16 @@ export function createServer(options: CreateServerOptions): YSyncServer {
 
   wss.on("connection", (socket) => {
     const connectionId = randomUUID();
-    logger.info("ws connection accepted", { connectionId });
+    const authSocket = socket as WebSocket & { __authUserId?: string };
+    logger.info("ws connection accepted", { connectionId, userId: authSocket.__authUserId });
 
     socket.on("message", (raw) => {
       void handleMessage(connectionId, socket, raw.toString());
     });
     socket.on("close", () => {
       const state = socketState.get(socket);
-      logger.info("ws connection closed", { connectionId, docId: state?.docId, replicaId: state?.replicaId });
+      logger.info("ws connection closed", { connectionId, docId: state?.docId, replicaId: state?.replicaId, userId: state?.userId });
       if (state) {
-        // this is required letting a promise reject inside a close event handler becomes an unhandled rejection
         roomManager.leave(state.docId, state.replicaId, socket).catch((err: unknown) => {
           logger.error("roomManager.leave failed on close", {
             connectionId,
@@ -180,7 +284,6 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         });
       }
     });
-    // without this listener, any random connection reset (proxy hiccup, client network, anything) throws unhandled and takes down the whole process
     socket.on("error", (err) => {
       const state = socketState.get(socket);
       logger.warn("ws connection error", {
