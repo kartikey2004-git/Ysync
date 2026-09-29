@@ -10,27 +10,20 @@ export interface UseDocumentResult {
   snapshot: DocumentClientSnapshot;
 }
 
-// React binding for DocumentClient. The client is browser-only (WebSocket +
-// IndexedDB), so it's built inside an effect — never in the render body, even guarded
-// by typeof window — so the client's first (pre-hydration) render exactly matches the
-// server's null. Building it eagerly during render caused a real hydration mismatch
-// (the server renders the null branch, but the client's first pass already had a
-// non-null client) — this bug only showed up running the app in a browser, a build pass wouldn't catch it.
-export function useDocument(docId: string): UseDocumentResult {
+export function useDocument(docId: string, userId: string | null): UseDocumentResult {
   const [client, setClient] = useState<DocumentClient | null>(null);
 
   useEffect(() => {
-    const instance = new DocumentClient(docId, WS_URL);
-    // this setState has to stay inside the effect — the instance can't be built in the render body (reason above)
+    if (!userId) return;
+    const instance = new DocumentClient(docId, WS_URL, userId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setClient(instance);
 
-    // close the old WS connection when docId changes or the component unmounts, don't leak it
     return () => {
       instance.dispose();
       setClient(null);
     };
-  }, [docId]);
+  }, [docId, userId]);
 
   const snapshot = useSyncExternalStore(
     (onStoreChange) => (client ? client.subscribe(onStoreChange) : () => {}),

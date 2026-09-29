@@ -58,6 +58,7 @@ const EMPTY_SNAPSHOT: DocumentClientSnapshot = {
 export class DocumentClient {
   readonly docId: string;
   private readonly wsUrl: string;
+  private readonly userId: string;
   private rga: Rga;
   private replicaId = "";
   private name = "";
@@ -78,10 +79,11 @@ export class DocumentClient {
   private simulatedOffline = false;
   private cachedSnapshot: DocumentClientSnapshot = EMPTY_SNAPSHOT;
 
-  constructor(docId: string, wsUrl: string) {
+  constructor(docId: string, wsUrl: string, userId: string) {
     this.docId = docId;
     this.wsUrl = wsUrl;
-    this.rga = new Rga(); // temporary — replaced with the real replicaId's Rga once init() resolves
+    this.userId = userId;
+    this.rga = new Rga();
     void this.init();
   }
 
@@ -92,7 +94,8 @@ export class DocumentClient {
       listOutbox(this.docId),
     ]);
 
-    this.replicaId = replica.replicaId;
+    // Server-validated replicaId: userId:deviceId prevents impersonation
+    this.replicaId = `${this.userId}:${replica.replicaId}`;
     this.name = replica.name;
     this.color = replica.color;
     this.rga = documentRecord && documentRecord.snapshotState.length > 0

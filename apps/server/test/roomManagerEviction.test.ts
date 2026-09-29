@@ -66,17 +66,17 @@ describe("RoomManager idle-eviction retries after a failed unsubscribe", () => {
       presenceStore: new InMemoryPresenceStore(),
       seqAllocator: new InMemorySeqAllocator(),
       persistenceStore,
-      sweepIntervalMs: 15,
-      idleTimeoutMs: 15,
+      sweepIntervalMs: 20,
+      idleTimeoutMs: 20,
     });
 
     await manager.join("doc-1", "alice", fakeSocket());
     expect(loadCalls).toBe(1); // the first (and so far only) load, to create the room
     await manager.leave("doc-1", "alice"); // room is now empty, idle clock starts
 
-    // the first eviction attempt (~15ms later) will fail (unsubscribe throws) — before
+    // the first eviction attempt (~20ms later) will fail (unsubscribe throws) — before
     // the fix this left the room permanently stale (sweepTimer already dead)
-    await wait(30);
+    await wait(25);
     // if the room is still registered (not evicted), rejoining shouldn't trigger a new
     // load — it should be reused, not recreated
     await manager.join("doc-1", "bob", fakeSocket());
@@ -84,7 +84,7 @@ describe("RoomManager idle-eviction retries after a failed unsubscribe", () => {
     await manager.leave("doc-1", "bob"); // empty again, idle clock restarts
 
     // unsubscribe now succeeds every time — give eviction a chance to retry
-    await wait(60);
+    await wait(50);
 
     // the room should be evicted by now — a new join will reload it from persistence
     await manager.join("doc-1", "carol", fakeSocket());

@@ -7,20 +7,99 @@ datasource db {
   provider = "postgresql"
 }
 
-// Document.id is the client-facing docId used throughout apps/server
-// (Redis channel names, Room, RoomManager) — not a separate generated id.
+// ─── Better Auth tables ───────────────────────────────────────────────
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+  memberships DocumentMember[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── YSync domain tables ──────────────────────────────────────────────
+
+enum DocumentRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
 model Document {
   id        String   @id
   latestSeq Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  members DocumentMember[]
 }
 
-// One row per Op. Several rows can share the same `seq` — seq is assigned
-// per client-submitted batch (RoomManager.applyClientOp), not per op.
-// targetId/mark/formatValue are populated only for type = "format" (see
-// @ysync/crdt's FormatOp) — a delete op's target is recovered from opId itself
-// (opIdKeyOf(deleteOp) === targetId), it doesn't need its own column.
+model DocumentMember {
+  id         String       @id @default(cuid())
+  documentId String
+  userId     String
+  role       DocumentRole
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId])
+  @@index([documentId])
+}
+
 model Operation {
   id          BigInt   @id @default(autoincrement())
   docId       String

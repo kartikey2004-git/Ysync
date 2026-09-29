@@ -18,3 +18,5 @@ packages/database/node_modules/.prisma
 packages/database/prisma/client
 
 docs/changes/*
+AUDIT.md
+prompt.md

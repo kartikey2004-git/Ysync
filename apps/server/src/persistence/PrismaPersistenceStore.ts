@@ -107,9 +107,16 @@ function groupBySeq(rows: OperationRow[]): OpBatch[] {
 // Real Postgres-backed PersistenceStore, via @ysync/database.
 export class PrismaPersistenceStore implements PersistenceStore {
   private readonly prisma: PrismaClient;
+  private readonly ownsClient: boolean;
 
-  constructor(databaseUrl: string) {
-    this.prisma = createPrismaClient(databaseUrl);
+  constructor(prismaOrUrl: PrismaClient | string) {
+    if (typeof prismaOrUrl === "string") {
+      this.prisma = createPrismaClient(prismaOrUrl);
+      this.ownsClient = true;
+    } else {
+      this.prisma = prismaOrUrl;
+      this.ownsClient = false;
+    }
     logger.info("persistence store initialized");
   }
 
@@ -199,6 +206,6 @@ export class PrismaPersistenceStore implements PersistenceStore {
   }
 
   async close(): Promise<void> {
-    await this.prisma.$disconnect();
+    if (this.ownsClient) await this.prisma.$disconnect();
   }
 }
