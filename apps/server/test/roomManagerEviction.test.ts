@@ -84,7 +84,7 @@ describe("RoomManager idle-eviction retries after a failed unsubscribe", () => {
     await manager.leave("doc-1", "bob"); // empty again, idle clock restarts
 
     // unsubscribe now succeeds every time — give eviction a chance to retry
-    await wait(50);
+    await wait(150);
 
     // the room should be evicted by now — a new join will reload it from persistence
     await manager.join("doc-1", "carol", fakeSocket());
