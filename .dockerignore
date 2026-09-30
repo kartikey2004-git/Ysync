@@ -3,6 +3,8 @@
 **/generated
 **/.turbo
 **/coverage
+**/test
+**/scripts
 .git
 .github
 docs

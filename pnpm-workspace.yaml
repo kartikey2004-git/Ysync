@@ -5,6 +5,7 @@ allowBuilds:
   '@prisma/engines': false
   esbuild: false
   prisma: false
+  protobufjs: false
   sharp: false
   unrs-resolver: false
   workerd: false

@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 config({ path: resolve(__dirname, "../../../.env") });
 
+import { initTracing } from "./tracing.js";
+initTracing();
+
 import { createPrismaClient } from "@ysync/database";
 import { createServer } from "./server.js";
 import { createAuth } from "./auth/betterAuth.js";
@@ -16,6 +19,7 @@ import { RedisSeqAllocator } from "./seq/RedisSeqAllocator.js";
 import { PrismaPersistenceStore } from "./persistence/PrismaPersistenceStore.js";
 import { logger, errorMeta } from "./logger.js";
 import { resolveRequiredUrl } from "./config.js";
+import { Redis } from "ioredis";
 
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandled promise rejection", { error: errorMeta(reason) });
@@ -57,6 +61,15 @@ const prisma = createPrismaClient(databaseUrl);
 const auth = createAuth(prisma);
 const authorizationService = new AuthorizationService(prisma);
 
+const healthRedis = new Redis(redisUrl);
+const healthCheck = async () => {
+  const [pg, rd] = await Promise.allSettled([
+    prisma.$queryRaw`SELECT 1`,
+    healthRedis.ping(),
+  ]);
+  return { postgres: pg.status === "fulfilled", redis: rd.status === "fulfilled" };
+};
+
 const { httpServer } = createServer({
   pubSubBus: new RedisPubSubBus(redisUrl),
   presenceStore: new RedisPresenceStore(redisUrl),
@@ -66,6 +79,7 @@ const { httpServer } = createServer({
   auth,
   authorizationService,
   prisma,
+  healthCheck,
 });
 
 httpServer.listen(port, () => {

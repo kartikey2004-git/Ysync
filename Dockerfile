@@ -9,13 +9,15 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Only the workspaces this image needs. Excluding apps/web keeps `npm ci`
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Only the workspaces this image needs. Excluding apps/web keeps pnpm
 # from trying to resolve its dependency tree at all.
-COPY package.json package-lock.json tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/server ./apps/server
 
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 # packages/database/prisma.config.ts calls prisma/config's env("DATABASE_URL")
 # at config-load time, so `prisma generate` fails fast without *some* value
@@ -27,18 +29,18 @@ ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 # Prisma 7 has no default Rust query engine — the generated client
 # (packages/database/generated/prisma) does not exist until this runs, and
 # packages/database's own `tsc` build imports from it.
-RUN npm run db:generate --workspace=packages/database
+RUN pnpm --filter @ysync/database run db:generate
 
-# Dependency-ordered build (npm --workspaces does not topologically sort):
+# Dependency-ordered build (pnpm does not topologically sort with --filter):
 # crdt and database have no in-repo deps; protocol imports crdt's dist;
 # server imports all three. The compiled apps/server/dist output is not
 # actually run in production (see below) but packages/crdt, packages/protocol,
 # and packages/database ARE consumed as compiled dist by apps/server, so all
 # four must still build.
-RUN npm run build --workspace=packages/crdt \
- && npm run build --workspace=packages/database \
- && npm run build --workspace=packages/protocol \
- && npm run build --workspace=apps/server
+RUN pnpm --filter @ysync/crdt run build \
+ && pnpm --filter @ysync/database run build \
+ && pnpm --filter @ysync/protocol run build \
+ && pnpm --filter @ysync/server run build
 
 # NOTE: devDependencies are intentionally NOT pruned here. Prisma 7's
 # generated client (packages/database/generated/prisma/client.ts) emits
@@ -58,10 +60,12 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN addgroup -S ysync && adduser -S ysync -G ysync
 
 COPY --from=build --chown=ysync:ysync /app/node_modules ./node_modules
 COPY --from=build --chown=ysync:ysync /app/package.json ./package.json
+COPY --from=build --chown=ysync:ysync /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=build --chown=ysync:ysync /app/packages ./packages
 COPY --from=build --chown=ysync:ysync /app/apps/server ./apps/server
 
@@ -72,4 +76,7 @@ WORKDIR /app/apps/server
 # reads process.env.PORT ?? 8080, so no code change is required.
 EXPOSE 8080
 
-CMD ["npx", "tsx", "src/index.ts"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
+
+CMD ["pnpm", "start"]

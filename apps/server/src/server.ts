@@ -12,12 +12,14 @@ import type { AuthorizationService } from "./auth/authorizationService.js";
 import { authenticateWsUpgrade } from "./auth/wsAuth.js";
 import { createDocumentRouter } from "./routes/documents.js";
 import type { PrismaClient } from "@ysync/database";
+import { register, activeWsConnections } from "./metrics.js";
 
 export interface CreateServerOptions extends RoomManagerOptions {
   allowedOrigins?: string[];
   auth?: Auth;
   authorizationService?: AuthorizationService;
   prisma?: PrismaClient;
+  healthCheck?: () => Promise<{ postgres: boolean; redis: boolean }>;
 }
 
 const MAX_WS_PAYLOAD_BYTES = 1_048_576;
@@ -42,7 +44,7 @@ function sendError(socket: WebSocket, code: string, message: string): void {
 }
 
 export function createServer(options: CreateServerOptions): YSyncServer {
-  const { auth, authorizationService, prisma, allowedOrigins, ...roomManagerOpts } = options;
+  const { auth, authorizationService, prisma, allowedOrigins, healthCheck, ...roomManagerOpts } = options;
   const roomManager = new RoomManager(roomManagerOpts);
   const app = express();
 
@@ -60,8 +62,23 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     app.all("/api/auth/*", toNodeHandler(auth));
   }
 
-  app.get("/health", (_req, res) => {
-    res.status(200).json({ ok: true });
+  app.get("/health", async (_req, res) => {
+    if (healthCheck) {
+      try {
+        const checks = await healthCheck();
+        const ok = checks.postgres && checks.redis;
+        res.status(ok ? 200 : 503).json({ status: ok ? "ok" : "error", checks });
+      } catch {
+        res.status(503).json({ status: "error", checks: { postgres: false, redis: false } });
+      }
+    } else {
+      res.status(200).json({ status: "ok" });
+    }
+  });
+
+  app.get("/metrics", async (_req, res) => {
+    res.set("Content-Type", register.contentType);
+    res.end(await register.metrics());
   });
 
   // Document CRUD + member management
@@ -183,7 +200,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         canWrite,
       });
 
-      const catchUp = await roomManager.join(message.docId, replicaId, socket, message.sinceSeq);
+      const catchUp = await roomManager.join(message.docId, replicaId, socket, message.sinceSeq, connectionId);
       socketState.set(socket, { docId: message.docId, replicaId, userId, sessionId, canWrite });
 
       const reply: ServerMessage =
@@ -229,7 +246,7 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         userId: state.userId,
         opCount: message.ops.length,
       });
-      await roomManager.applyClientOp(state.docId, state.replicaId, message.ops);
+      await roomManager.applyClientOp(state.docId, state.replicaId, message.ops, connectionId);
       return;
     }
     if (message.type === "presence") {
@@ -239,12 +256,12 @@ export function createServer(options: CreateServerOptions): YSyncServer {
         selection: message.selection,
         name: message.name,
         color: message.color,
-      });
+      }, connectionId);
       return;
     }
     if (message.type === "leave") {
       logger.info("leave received", { connectionId, docId: state.docId, replicaId: state.replicaId, userId: state.userId });
-      await roomManager.leave(state.docId, state.replicaId, socket);
+      await roomManager.leave(state.docId, state.replicaId, socket, connectionId);
       socketState.delete(socket);
     }
   }
@@ -266,15 +283,17 @@ export function createServer(options: CreateServerOptions): YSyncServer {
     const connectionId = randomUUID();
     const authSocket = socket as WebSocket & { __authUserId?: string };
     logger.info("ws connection accepted", { connectionId, userId: authSocket.__authUserId });
+    activeWsConnections.inc();
 
     socket.on("message", (raw) => {
       void handleMessage(connectionId, socket, raw.toString());
     });
     socket.on("close", () => {
+      activeWsConnections.dec();
       const state = socketState.get(socket);
       logger.info("ws connection closed", { connectionId, docId: state?.docId, replicaId: state?.replicaId, userId: state?.userId });
       if (state) {
-        roomManager.leave(state.docId, state.replicaId, socket).catch((err: unknown) => {
+        roomManager.leave(state.docId, state.replicaId, socket, connectionId).catch((err: unknown) => {
           logger.error("roomManager.leave failed on close", {
             connectionId,
             docId: state.docId,

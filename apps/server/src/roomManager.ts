@@ -8,6 +8,10 @@ import type { PersistenceStore } from "./persistence/PersistenceStore.js";
 import { Room } from "./room.js";
 import type { WebSocket } from "ws";
 import { logger, errorMeta, summarizeOpIds } from "./logger.js";
+import * as metrics from "./metrics.js";
+import { trace, SpanStatusCode } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("ysync-server");
 
 interface RoomEntry {
   room: Room;
@@ -105,6 +109,7 @@ export class RoomManager {
       }, this.sweepIntervalMs),
     };
     this.rooms.set(docId, entry);
+    metrics.activeRooms.set(this.rooms.size);
 
     try {
       await this.pubSubBus.subscribe(docChannel(docId), (raw) => {
@@ -116,6 +121,7 @@ export class RoomManager {
     } catch (err) {
       // subscribe failing means leaving the room half-created is wrong — clean up both the sweepTimer and the map entry, or it leaks
       logger.error("pubSubBus.subscribe failed", { docId, error: errorMeta(err) });
+      metrics.errors.inc({ stage: "subscribe" });
       clearInterval(entry.sweepTimer);
       this.rooms.delete(docId);
       throw new Error(`failed to subscribe to pub/sub channels for document ${docId}`);
@@ -131,16 +137,17 @@ export class RoomManager {
     replicaId: string,
     socket: WebSocket,
     sinceSeq = 0,
+    connectionId?: string,
   ): Promise<{ kind: "sync"; seq: number; ops: Op[] } | { kind: "snapshot"; seq: number; state: ReturnType<Room["snapshot"]> }> {
-    logger.debug("roomManager join start", { docId, replicaId, sinceSeq });
+    logger.debug("roomManager join start", { connectionId, docId, replicaId, sinceSeq });
     const room = await this.getOrCreateRoom(docId);
     const previousSocket = room.join(replicaId, socket);
     if (previousSocket && previousSocket !== socket && previousSocket.readyState === previousSocket.OPEN) {
-      // a previous socket was already joined under this replicaId (duplicate tab, or a reconnect whose close event hasn't arrived yet) — close it so it doesn't end up orphaned/unreachable. Room.leave's identity check (room.ts) makes sure this socket's own close event won't evict the new one that just took over.
-      logger.warn("closing previous socket for replicaId (replaced by a new connection)", { docId, replicaId });
+      logger.warn("closing previous socket for replicaId (replaced by a new connection)", { connectionId, docId, replicaId });
       previousSocket.close(4000, "replaced by a newer connection for this replicaId");
+      metrics.reconnects.inc();
     }
-    logger.info("client added", { docId, replicaId, clientCount: room.replicaIds().length });
+    logger.info("client added", { connectionId, docId, replicaId, clientCount: room.replicaIds().length });
     const entry = this.rooms.get(docId);
     if (entry) entry.emptySince = null;
 
@@ -149,88 +156,119 @@ export class RoomManager {
       incremental !== null
         ? { kind: "sync", seq: room.currentSeq(), ops: incremental }
         : { kind: "snapshot", seq: room.currentSeq(), state: room.snapshot() };
-    logger.debug("roomManager join done", { docId, replicaId, kind: result.kind, seq: result.seq });
+    logger.debug("roomManager join done", { connectionId, docId, replicaId, kind: result.kind, seq: result.seq });
     return result;
   }
 
   // emptySince gets set here, and tick() checks it against idleTimeoutMs — that's what decides when a room gets evicted (no cross-process signal needed)
-  async leave(docId: string, replicaId: string, socket?: WebSocket): Promise<void> {
+  async leave(docId: string, replicaId: string, socket?: WebSocket, connectionId?: string): Promise<void> {
     const entry = this.rooms.get(docId);
     entry?.room.leave(replicaId, socket);
-    logger.info("client removed", { docId, replicaId, clientCount: entry?.room.replicaIds().length ?? 0 });
+    logger.info("client removed", { connectionId, docId, replicaId, clientCount: entry?.room.replicaIds().length ?? 0 });
     if (entry?.room.isEmpty()) {
       entry.emptySince = Date.now();
-      logger.info("room emptied", { docId });
+      logger.info("room emptied", { connectionId, docId });
     }
     await this.removePresence(docId, replicaId);
   }
 
-  async applyClientOp(docId: string, senderReplicaId: string, ops: Op[]): Promise<void> {
-    const room = await this.getOrCreateRoom(docId);
-    const opIds = ops.map(opIdKeyOf);
+  async applyClientOp(docId: string, senderReplicaId: string, ops: Op[], connectionId?: string): Promise<void> {
+    return tracer.startActiveSpan("ysync.applyClientOp", async (span) => {
+      span.setAttributes({ "ysync.doc_id": docId, "ysync.op_count": ops.length });
+      try {
+        const room = await this.getOrCreateRoom(docId);
+        const opIds = ops.map(opIdKeyOf);
+        metrics.opsReceived.inc();
 
-    let seq: number;
-    try {
-      seq = await this.seqAllocator.next(docId);
-    } catch (err) {
-      // Redis is down, so a seq can't be allocated — better to tell the client to retry than to silently drop the op
-      logger.error("seqAllocator.next failed", { docId, replicaId: senderReplicaId, error: errorMeta(err) });
-      room.sendTo(senderReplicaId, {
-        type: "error",
-        code: "SEQ_ALLOC_FAILED",
-        message: "could not allocate a sequence number for your edit — it was not applied, please retry",
-      });
-      return;
-    }
+        let seq: number;
+        try {
+          const seqEnd = metrics.redisOperationDuration.startTimer({ operation: "seq_next" });
+          seq = await this.seqAllocator.next(docId);
+          seqEnd();
+        } catch (err) {
+          logger.error("seqAllocator.next failed", { connectionId, docId, replicaId: senderReplicaId, error: errorMeta(err) });
+          metrics.errors.inc({ stage: "seq_alloc" });
+          span.recordException(err as Error);
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          room.sendTo(senderReplicaId, {
+            type: "error",
+            code: "SEQ_ALLOC_FAILED",
+            message: "could not allocate a sequence number for your edit — it was not applied, please retry",
+          });
+          return;
+        }
 
-    room.applyOps(ops, seq);
-    logger.debug("operation applied to room", { docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
+        room.applyOps(ops, seq);
+        logger.debug("operation applied to room", { connectionId, docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
 
-    // broadcast first, persist second — the user needs to see their own edit immediately, it shouldn't wait on DB write latency
-    room.broadcast({ type: "broadcast-op", docId, seq, ops }, senderReplicaId);
-    const fanoutPayload: OpFanoutPayload = { originId: this.processId, seq, ops };
-    try {
-      await this.pubSubBus.publish(docChannel(docId), JSON.stringify(fanoutPayload));
-      logger.debug("operation published", { docId, channel: docChannel(docId), seq, ...summarizeOpIds(opIds) });
-    } catch (err) {
-      // a failed publish is fine — local clients already got the broadcast, and persistence is tried below. Only *other* instances' clients miss this op until their next resync
-      logger.error("pubSubBus.publish failed", { docId, replicaId: senderReplicaId, seq, error: errorMeta(err) });
-    }
+        const broadcastEnd = metrics.opBroadcastDuration.startTimer();
+        room.broadcast({ type: "broadcast-op", docId, seq, ops }, senderReplicaId);
+        broadcastEnd();
+        metrics.opsBroadcast.inc();
 
-    try {
-      await this.persistenceStore.appendOps(docId, seq, ops);
-      logger.info("operation persisted", { docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
-      room.sendTo(senderReplicaId, { type: "ack", docId, seq, opIds: ops.map(opIdOf) });
-    } catch (err) {
-      // the Postgres save failed, but the edit was already broadcast — no data loss, just tell the client it'll be retried on reconnect (it'll come back from the outbox)
-      logger.error("failed to persist operation", {
-        docId,
-        replicaId: senderReplicaId,
-        seq,
-        ...summarizeOpIds(opIds),
-        error: errorMeta(err),
-      });
-      room.sendTo(senderReplicaId, {
-        type: "error",
-        code: "PERSIST_FAILED",
-        message: "your edit was applied and shared, but could not be durably saved — it will be retried on reconnect",
-      });
-    }
+        const fanoutPayload: OpFanoutPayload = { originId: this.processId, seq, ops };
+        try {
+          const pubEnd = metrics.redisOperationDuration.startTimer({ operation: "publish" });
+          await this.pubSubBus.publish(docChannel(docId), JSON.stringify(fanoutPayload));
+          pubEnd();
+          logger.debug("operation published", { connectionId, docId, channel: docChannel(docId), seq, ...summarizeOpIds(opIds) });
+        } catch (err) {
+          metrics.errors.inc({ stage: "publish" });
+          logger.error("pubSubBus.publish failed", { connectionId, docId, replicaId: senderReplicaId, seq, error: errorMeta(err) });
+        }
+
+        await tracer.startActiveSpan("ysync.persist", async (persistSpan) => {
+          persistSpan.setAttributes({ "ysync.doc_id": docId, "ysync.seq": seq });
+          const persistEnd = metrics.opPersistDuration.startTimer();
+          try {
+            await this.persistenceStore.appendOps(docId, seq, ops);
+            persistEnd();
+            metrics.opsPersisted.inc();
+            logger.info("operation persisted", { connectionId, docId, replicaId: senderReplicaId, seq, ...summarizeOpIds(opIds) });
+            room.sendTo(senderReplicaId, { type: "ack", docId, seq, opIds: ops.map(opIdOf) });
+          } catch (err) {
+            persistEnd();
+            metrics.errors.inc({ stage: "persist" });
+            logger.error("failed to persist operation", {
+              connectionId,
+              docId,
+              replicaId: senderReplicaId,
+              seq,
+              ...summarizeOpIds(opIds),
+              error: errorMeta(err),
+            });
+            persistSpan.recordException(err as Error);
+            persistSpan.setStatus({ code: SpanStatusCode.ERROR });
+            room.sendTo(senderReplicaId, {
+              type: "error",
+              code: "PERSIST_FAILED",
+              message: "your edit was applied and shared, but could not be durably saved — it will be retried on reconnect",
+            });
+          } finally {
+            persistSpan.end();
+          }
+        });
+      } finally {
+        span.end();
+      }
+    });
   }
 
-  async updatePresence(docId: string, senderReplicaId: string, awareness: Omit<PresenceEntry, "replicaId">): Promise<void> {
+  async updatePresence(docId: string, senderReplicaId: string, awareness: Omit<PresenceEntry, "replicaId">, connectionId?: string): Promise<void> {
     const room = await this.getOrCreateRoom(docId);
     const entry: PresenceEntry = { replicaId: senderReplicaId, ...awareness };
+    metrics.presenceUpdates.inc();
 
     try {
+      const presEnd = metrics.redisOperationDuration.startTimer({ operation: "presence_set" });
       await this.presenceStore.set(docId, entry, this.presenceTtlMs);
+      presEnd();
     } catch (err) {
-      // if presence didn't save to Redis, don't broadcast either — stale/wrong state isn't better
-      logger.error("presenceStore.set failed", { docId, replicaId: senderReplicaId, error: errorMeta(err) });
+      metrics.errors.inc({ stage: "presence" });
+      logger.error("presenceStore.set failed", { connectionId, docId, replicaId: senderReplicaId, error: errorMeta(err) });
       return;
     }
-    // debug, not info — every connected client heartbeats roughly every 8s, info level would flood the logs
-    logger.debug("presence update", { docId, replicaId: senderReplicaId });
+    logger.debug("presence update", { connectionId, docId, replicaId: senderReplicaId });
 
     room.broadcast({ type: "presence-update", docId, ...entry }, senderReplicaId);
 
@@ -328,12 +366,24 @@ export class RoomManager {
     if (!entry) return;
     const { room } = entry;
 
-    room.compactTombstones();
-    const state = room.snapshot();
-    const atSeq = room.currentSeq();
-    await this.persistenceStore.writeSnapshot(docId, atSeq, state);
-    room.advanceCoverageFloor(atSeq);
-    logger.info("snapshot persisted", { docId, atSeq, nodeCount: state.length });
+    return tracer.startActiveSpan("ysync.snapshot", async (span) => {
+      span.setAttributes({ "ysync.doc_id": docId, "ysync.seq": room.currentSeq() });
+      try {
+        room.compactTombstones();
+        const state = room.snapshot();
+        const atSeq = room.currentSeq();
+        await this.persistenceStore.writeSnapshot(docId, atSeq, state);
+        room.advanceCoverageFloor(atSeq);
+        metrics.snapshots.inc();
+        logger.info("snapshot persisted", { docId, atSeq, nodeCount: state.length });
+      } catch (err) {
+        span.recordException(err as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   private async tick(docId: string): Promise<void> {
@@ -362,6 +412,7 @@ export class RoomManager {
           await this.pubSubBus.unsubscribe(presenceChannel(docId));
           clearInterval(entry.sweepTimer);
           this.rooms.delete(docId);
+          metrics.activeRooms.set(this.rooms.size);
           logger.info("room evicted (idle timeout)", { docId, roomCount: this.rooms.size });
         }
       } else {
@@ -369,6 +420,7 @@ export class RoomManager {
       }
     } catch (err) {
       // this runs inside a setInterval with nothing awaiting it — a thrown error here would crash the process directly, so the try/catch is mandatory
+      metrics.errors.inc({ stage: "tick" });
       logger.error("tick failed", { docId, error: errorMeta(err) });
     }
   }
