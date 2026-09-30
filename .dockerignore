@@ -9,6 +9,7 @@
 .github
 docs
 apps/web
+!apps/web/package.json
 *.md
 .env
 .env.*
