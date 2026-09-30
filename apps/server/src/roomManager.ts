@@ -55,6 +55,7 @@ function presenceChannel(docId: string): string {
 // Every active Room in this process is controlled through this class, and it also manages cross-process fan-out and persistence. Every published message carries its own processId so the subscriber side can skip its own echo — the local broadcast has already happened synchronously, the pub/sub round trip is only for other Cloud Run instances.
 export class RoomManager {
   private readonly rooms = new Map<string, RoomEntry>();
+  private readonly inFlightLoads = new Map<string, Promise<Room>>();
   private readonly processId = randomUUID();
   private readonly pubSubBus: PubSubBus;
   private readonly presenceStore: PresenceStore;
@@ -77,19 +78,36 @@ export class RoomManager {
   }
 
   async getOrCreateRoom(docId: string): Promise<Room> {
-    // already in memory, no need to reload from Postgres
     const existing = this.rooms.get(docId);
     if (existing) {
       logger.debug("room reused", { docId, roomCount: this.rooms.size });
       return existing.room;
     }
 
+    const inflight = this.inFlightLoads.get(docId);
+    if (inflight) {
+      metrics.roomLoadsDeduped.inc();
+      logger.debug("room load already in flight, awaiting", { docId });
+      return inflight;
+    }
+
+    const loadPromise = this.loadRoom(docId);
+    this.inFlightLoads.set(docId, loadPromise);
+    try {
+      return await loadPromise;
+    } finally {
+      this.inFlightLoads.delete(docId);
+    }
+  }
+
+  private async loadRoom(docId: string): Promise<Room> {
+    logger.info("room_load_started", { docId });
     let snapshot, snapshotSeq, ops, latestSeq;
     try {
       ({ snapshot, snapshotSeq, ops, latestSeq } = await this.persistenceStore.load(docId));
     } catch (err) {
-      // Postgres is down or the query failed — don't crash here, wrap the error and let it propagate
-      logger.error("persistenceStore.load failed", { docId, error: errorMeta(err) });
+      logger.error("room_load_failed", { docId, error: errorMeta(err) });
+      metrics.roomLoadFailures.inc();
       throw new Error(`failed to load document ${docId} from persistence`);
     }
     logger.debug("document loaded from persistence", {
@@ -119,7 +137,6 @@ export class RoomManager {
         void this.handleRemotePresence(docId, raw);
       });
     } catch (err) {
-      // subscribe failing means leaving the room half-created is wrong — clean up both the sweepTimer and the map entry, or it leaks
       logger.error("pubSubBus.subscribe failed", { docId, error: errorMeta(err) });
       metrics.errors.inc({ stage: "subscribe" });
       clearInterval(entry.sweepTimer);
@@ -127,7 +144,7 @@ export class RoomManager {
       throw new Error(`failed to subscribe to pub/sub channels for document ${docId}`);
     }
 
-    logger.info("room created", { docId, roomCount: this.rooms.size, latestSeq });
+    logger.info("room_load_completed", { docId, roomCount: this.rooms.size, latestSeq });
     return room;
   }
 
@@ -303,10 +320,17 @@ export class RoomManager {
   }
 
   async close(): Promise<void> {
-    for (const entry of this.rooms.values()) {
+    for (const [docId, entry] of this.rooms.entries()) {
       clearInterval(entry.sweepTimer);
+      try {
+        await this.pubSubBus.unsubscribe(docChannel(docId));
+        await this.pubSubBus.unsubscribe(presenceChannel(docId));
+      } catch (err) {
+        logger.warn("close: unsubscribe failed", { docId, error: errorMeta(err) });
+      }
     }
     this.rooms.clear();
+    metrics.activeRooms.set(0);
   }
 
   private async handleRemoteOp(docId: string, raw: string): Promise<void> {

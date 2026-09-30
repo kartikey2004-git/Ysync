@@ -65,6 +65,49 @@ export const errors = new Counter({
   registers: [register],
 });
 
+export const shutdowns = new Counter({
+  name: "ysync_shutdown_total",
+  help: "Total shutdown attempts by outcome",
+  labelNames: ["outcome"] as const,
+  registers: [register],
+});
+
+export const duplicateOps = new Counter({
+  name: "ysync_duplicate_ops_total",
+  help: "Total number of duplicate operations skipped by persistence",
+  registers: [register],
+});
+
+export const persistenceFailures = new Counter({
+  name: "ysync_persistence_failures_total",
+  help: "Total persistence failures",
+  registers: [register],
+});
+
+export const roomLoadFailures = new Counter({
+  name: "ysync_room_load_failures_total",
+  help: "Total room load failures",
+  registers: [register],
+});
+
+export const roomLoadsDeduped = new Counter({
+  name: "ysync_room_loads_deduped_total",
+  help: "Total room load calls that joined an in-flight load instead of starting a new one",
+  registers: [register],
+});
+
+export const sequenceSeeds = new Counter({
+  name: "ysync_sequence_seeds_total",
+  help: "Total sequence counter seeds from PostgreSQL after Redis miss",
+  registers: [register],
+});
+
+export const sequenceSeedFailures = new Counter({
+  name: "ysync_sequence_seed_failures_total",
+  help: "Total failures when seeding sequence counter from PostgreSQL",
+  registers: [register],
+});
+
 // --- Histograms ---
 
 export const opPersistDuration = new Histogram({

@@ -20,6 +20,7 @@ import { PrismaPersistenceStore } from "./persistence/PrismaPersistenceStore.js"
 import { logger, errorMeta } from "./logger.js";
 import { resolveRequiredUrl } from "./config.js";
 import { Redis } from "ioredis";
+import * as metrics from "./metrics.js";
 
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandled promise rejection", { error: errorMeta(reason) });
@@ -61,6 +62,19 @@ const prisma = createPrismaClient(databaseUrl);
 const auth = createAuth(prisma);
 const authorizationService = new AuthorizationService(prisma);
 
+const pubSubBus = new RedisPubSubBus(redisUrl);
+const presenceStore = new RedisPresenceStore(redisUrl);
+const seqAllocator = new RedisSeqAllocator(redisUrl, {
+  getLatestSeq: async (docId: string) => {
+    const doc = await prisma.document.findUnique({
+      where: { id: docId },
+      select: { latestSeq: true },
+    });
+    return doc?.latestSeq ?? 0;
+  },
+});
+const persistenceStore = new PrismaPersistenceStore(prisma);
+
 const healthRedis = new Redis(redisUrl);
 const healthCheck = async () => {
   const [pg, rd] = await Promise.allSettled([
@@ -70,11 +84,11 @@ const healthCheck = async () => {
   return { postgres: pg.status === "fulfilled", redis: rd.status === "fulfilled" };
 };
 
-const { httpServer } = createServer({
-  pubSubBus: new RedisPubSubBus(redisUrl),
-  presenceStore: new RedisPresenceStore(redisUrl),
-  seqAllocator: new RedisSeqAllocator(redisUrl),
-  persistenceStore: new PrismaPersistenceStore(prisma),
+const { httpServer, wss, roomManager } = createServer({
+  pubSubBus,
+  presenceStore,
+  seqAllocator,
+  persistenceStore,
   allowedOrigins,
   auth,
   authorizationService,
@@ -85,3 +99,61 @@ const { httpServer } = createServer({
 httpServer.listen(port, () => {
   logger.info("ysync server listening", { port });
 });
+
+// --- Graceful shutdown ---
+
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 10_000);
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info("shutdown_started", { signal, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+
+  const deadline = setTimeout(() => {
+    logger.error("shutdown_timeout", { signal, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+    metrics.shutdowns.inc({ outcome: "timeout" });
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  deadline.unref();
+
+  try {
+    // 1. Stop accepting new WS connections and close existing ones
+    wss.close();
+    for (const client of wss.clients) {
+      client.close(1001, "server shutting down");
+    }
+    logger.info("shutdown_draining", { step: "wss_closed" });
+
+    // 2. Stop accepting new HTTP connections
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    logger.info("shutdown_draining", { step: "http_closed" });
+
+    // 3. Close room manager (clears sweep timers)
+    await roomManager.close();
+    logger.info("shutdown_draining", { step: "rooms_closed" });
+
+    // 4. Close all Redis connections
+    await seqAllocator.close();
+    await presenceStore.close();
+    await pubSubBus.close();
+    await healthRedis.quit();
+    logger.info("shutdown_draining", { step: "redis_closed" });
+
+    // 5. Disconnect Prisma
+    await prisma.$disconnect();
+
+    metrics.shutdowns.inc({ outcome: "complete" });
+    logger.info("shutdown_complete", { signal });
+    clearTimeout(deadline);
+    process.exit(0);
+  } catch (err) {
+    logger.error("shutdown_error", { signal, error: errorMeta(err) });
+    metrics.shutdowns.inc({ outcome: "error" });
+    clearTimeout(deadline);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
