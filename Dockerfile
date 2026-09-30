@@ -11,11 +11,12 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Only the workspaces this image needs. Excluding apps/web keeps pnpm
-# from trying to resolve its dependency tree at all.
+# Only the workspaces this image needs. apps/web is excluded via
+# .dockerignore but pnpm needs its package.json to validate the lockfile.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/server ./apps/server
+RUN mkdir -p apps/web && echo '{"name":"@ysync/web","version":"0.1.0","private":true}' > apps/web/package.json
 
 RUN pnpm install --frozen-lockfile
 
