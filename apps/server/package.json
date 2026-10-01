@@ -13,9 +13,9 @@
     "benchmark:latency": "tsx scripts/loadTest.ts"
   },
   "dependencies": {
-    "@ysync/crdt": "0.1.0",
-    "@ysync/database": "0.1.0",
-    "@ysync/protocol": "0.1.0",
+    "@ysync/crdt": "workspace:*",
+    "@ysync/database": "workspace:*",
+    "@ysync/protocol": "workspace:*",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "tsx": "^4.19.1",

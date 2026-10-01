@@ -11,9 +11,9 @@
     "deploy:cf": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
-    "@ysync/crdt": "0.1.0",
-    "@ysync/protocol": "0.1.0",
-    "@ysync/ui": "0.1.0",
+    "@ysync/crdt": "workspace:*",
+    "@ysync/protocol": "workspace:*",
+    "@ysync/ui": "workspace:*",
     "clsx": "^2.1.1",
     "framer-motion": "^11.15.0",
     "idb": "^8.0.0",
