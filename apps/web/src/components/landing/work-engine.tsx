@@ -1,7 +1,6 @@
 "use client";
 
 import { Feature, leftFeatures, rightFeatures } from "@/lib/landing-data";
-import { ArrowRight } from "lucide-react";
 
 export default function GroundworkEngineSection({
   onCreateNew,
@@ -9,40 +8,32 @@ export default function GroundworkEngineSection({
   onCreateNew?: () => void;
 }) {
   return (
-    <section className="bg-black py-16">
+    <section className="bg-black py-12 sm:py-16 lg:py-24">
       <div className="w-full px-4 sm:px-6 lg:px-10">
-        <div className="flex flex-col justify-between gap-8 pb-12 md:flex-row md:items-start">
+        <div className="flex flex-col justify-between gap-8 pb-10 sm:pb-12 lg:flex-row lg:items-start">
           <div>
-            <h2 className="text-2xl font-semibold text-white md:text-3xl">
-              Powered by the YSync
-            </h2>
-            <h2 className="bg-gradient-to-r from-sky-400 via-violet-400 to-orange-400 bg-clip-text text-2xl font-semibold text-transparent md:text-3xl p-0.5">
-              CRDT Engine
+            <h2 className="text-[clamp(1.75rem,4vw,2.25rem)] font-medium leading-[1.05] tracking-[-0.03em] text-white">
+              What Powers The
+              <br />
+              Archive
             </h2>
           </div>
 
-          <div className="max-w-sm md:text-right">
-            <p className="text-sm leading-relaxed text-zinc-500">
+          <div className="max-w-xl lg:max-w-sm lg:text-right">
+            <p className="text-sm leading-6 text-zinc-500">
               Most collaborative tools either lock the document while someone
               else edits, or silently drop your changes when you reconnect.
             </p>
-            <p className="mt-3 text-sm leading-relaxed text-zinc-500">
-              With YSync, every edit is preserved and merged automatically —
-              no matter the order it arrives in.
-            </p>
 
-            <button
-              onClick={onCreateNew}
-              className="mt-4 inline-flex items-center gap-2 border border-white bg-white px-4 py-2 text-xs font-medium text-black transition hover:bg-zinc-200"
-            >
-              Get Started
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            <p className="mt-3 text-sm leading-6 text-zinc-500">
+              With YSync, every edit is preserved and merged automatically, no
+              matter the order it arrives in.
+            </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 border border-zinc-800 md:grid-cols-[1fr_240px_1fr]">
-          <div className="grid grid-rows-5 divide-y divide-zinc-800 border-b border-zinc-800 md:border-b-0 md:border-r">
+        <div className="grid grid-cols-1 border border-zinc-800 lg:grid-cols-[1fr_240px_1fr]">
+          <div className="grid grid-cols-1 divide-y divide-zinc-800 lg:grid-rows-5">
             <FeatureCell feature={leftFeatures[0]} />
             <EmptyCell />
             <FeatureCell feature={leftFeatures[1]} />
@@ -50,11 +41,11 @@ export default function GroundworkEngineSection({
             <FeatureCell feature={leftFeatures[2]} />
           </div>
 
-          <div className="relative hidden items-center justify-center md:flex">
+          <div className="relative hidden items-center justify-center border-x border-zinc-800 lg:flex">
             <StackIllustration />
           </div>
 
-          <div className="grid grid-rows-5 divide-y divide-zinc-800 border-t border-zinc-800 md:border-l md:border-t-0">
+          <div className="grid grid-cols-1 divide-y divide-zinc-800 border-t border-zinc-800 lg:grid-rows-5 lg:border-l lg:border-t-0">
             <EmptyCell />
             <FeatureCell feature={rightFeatures[0]} />
             <EmptyCell />
@@ -71,10 +62,17 @@ function FeatureCell({ feature }: { feature: Feature }) {
   const Icon = feature.icon;
 
   return (
-    <div className={`relative p-5 ${feature.accent ? "" : ""}`}>
-      <Icon className="mb-3 h-4 w-4 text-zinc-400" strokeWidth={1.5} />
-      <h3 className="text-md tracking-tight text-white">{feature.title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-zinc-500">
+    <div className="relative min-h-[130px] p-5 sm:min-h-[140px] sm:p-6 lg:p-5">
+      <Icon
+        className="mb-3 h-4 w-4 text-zinc-400"
+        strokeWidth={1.5}
+      />
+
+      <h3 className="text-base tracking-tight text-white">
+        {feature.title}
+      </h3>
+
+      <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-500">
         {feature.description}
       </p>
     </div>
@@ -82,18 +80,18 @@ function FeatureCell({ feature }: { feature: Feature }) {
 }
 
 function EmptyCell() {
-  return <div className="min-h-[110px]" />;
+  return <div className="hidden min-h-[100px] lg:block" />;
 }
 
 function StackIllustration() {
   return (
     <div className="relative flex justify-center bg-black py-10">
       <svg
-        width="260"
-        height="660"
-        viewBox="0 0 260 660"
+        className="h-auto w-[180px] xl:w-[220px]"
+        viewBox="0 0 260 720"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
       >
         <defs>
           <linearGradient
@@ -153,21 +151,23 @@ function StackIllustration() {
           />
           <feColorMatrix type="saturate" values="0" />
         </filter>
-        <rect width="260" height="660" fill="black" />
+
+        <rect width="260" height="720" fill="black" />
+
         <rect
           width="260"
-          height="660"
+          height="720"
           filter="url(#stackGrain)"
           opacity="0.05"
         />
 
         <g stroke="#4b4b4f" strokeWidth="1" strokeDasharray="2 5">
-          <path d="M34 90 V610" />
-          <path d="M130 130 V630" />
-          <path d="M226 90 V610" />
+          <path d="M34 90 V690" />
+          <path d="M130 130 V710" />
+          <path d="M226 90 V690" />
         </g>
 
-        <g>
+        <g id="topDevice">
           <path
             d="M34 40 L34 90 L130 130 L226 90 L226 40 L130 76 Z"
             fill="url(#deviceSide)"
@@ -175,7 +175,6 @@ function StackIllustration() {
             strokeWidth="1"
           />
 
-          {/* iridescent edge line along the bottom of the side wall */}
           <path
             d="M34 88 L130 128 L226 88"
             stroke="url(#iridescence)"
@@ -184,7 +183,6 @@ function StackIllustration() {
             opacity="0.9"
           />
 
-          {/* vent slats on the left face */}
           <g stroke="#3a3a3e" strokeWidth="1.6" strokeLinecap="round">
             <path d="M40 52 L40 74" />
             <path d="M45 54 L45 76" />
@@ -193,7 +191,6 @@ function StackIllustration() {
             <path d="M60 60 L60 82" />
           </g>
 
-          {/* top face */}
           <path
             d="M130 4
                C136 4 142 5.5 147 8
@@ -227,13 +224,19 @@ function StackIllustration() {
         <StackLayer cy={230} opacity={0.85} />
         <StackLayer cy={345} opacity={0.55} />
         <StackLayer cy={460} opacity={0.35} />
-        <StackLayer cy={575} opacity={0.18} />
+        <use href="#topDevice" transform="translate(0 590)" />
       </svg>
     </div>
   );
 }
 
-function StackLayer({ cy, opacity }: { cy: number; opacity: number }) {
+function StackLayer({
+  cy,
+  opacity,
+}: {
+  cy: number;
+  opacity: number;
+}) {
   return (
     <g opacity={opacity}>
       <path

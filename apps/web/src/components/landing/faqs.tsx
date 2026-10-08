@@ -38,7 +38,7 @@ export default function FAQSection() {
                     onClick={() => setOpen(isOpen ? null : index)}
                     className="flex w-full items-center justify-between px-4 py-5 text-left transition-colors hover:bg-black/[0.02]"
                   >
-                    <span className="pr-6 text-md font-medium text-black">
+                    <span className="pr-6 text-md font-normal text-black">
                       {faq.question}
                     </span>
 

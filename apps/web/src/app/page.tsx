@@ -11,6 +11,7 @@ import ReplyRateSection from "../components/landing/reply-rate";
 import GroundworkEngineSection from "../components/landing/work-engine";
 import FAQSection from "../components/landing/faqs";
 import { GroundworkFooter } from "../components/landing/footer";
+import { LandingNav } from "../components/landing/navbar";
 
 export default function HomePage() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function HomePage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
+      <LandingNav />
       <main className="w-full flex-1">
         <Hero
           onCreateNew={createNew}
@@ -36,17 +38,21 @@ export default function HomePage() {
           onSlugChange={setSlugInput}
           onJoin={joinExisting}
         />
-        <div id="how-it-works">
+        <div id="how-it-works" className="scroll-mt-16">
           <WorkFlow />
         </div>
-        <ProcessSection />
-        <div id="capabilities">
+        <div id="process" className="scroll-mt-16">
+          <ProcessSection />
+        </div>
+        <div id="features" className="scroll-mt-16">
           <CaseStudiesSection onCreateNew={createNew} />
         </div>
         <TestimonialBanner />
         <ReplyRateSection />
         <GroundworkEngineSection onCreateNew={createNew} />
-        <FAQSection />
+        <div id="faq" className="scroll-mt-16">
+          <FAQSection />
+        </div>
       </main>
 
       <GroundworkFooter />
