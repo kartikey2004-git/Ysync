@@ -3,89 +3,131 @@
 import { Sparkles } from "lucide-react";
 import { Step, steps } from "@/lib/landing-data";
 
+const SPANS = [
+  "lg:col-span-4",
+  "lg:col-span-2",
+  "lg:col-span-2",
+  "lg:col-span-2",
+  "lg:col-span-2",
+];
+
 export default function ProcessSection() {
   return (
-    <section className="bg-black text-white">
-      <div className="w-full px-4 py-24 sm:px-6 lg:px-10">
-        <div className="mx-auto flex max-w-6xl flex-wrap justify-center gap-6">
-          {steps.map((step) => (
-            <div
+    <section className="overflow-hidden bg-white text-black">
+      <div className="w-full py-16 sm:py-20 lg:py-24">
+        <div className="mx-auto mb-10 max-w-6xl px-4 sm:mb-12 sm:px-6 lg:px-10">
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-black/40">
+            Process
+          </p>
+
+          <h2 className="mt-3 text-3xl font-medium tracking-tight text-black sm:text-4xl">
+            How it works
+          </h2>
+        </div>
+
+        <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-10">
+        <div className="grid w-full grid-cols-1 border-l border-t border-black/10 sm:grid-cols-2 lg:grid-cols-6">
+          {steps.map((step, index) => (
+            <BentoCard
               key={step.id}
-              className="w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]"
-            >
-              <SignalCard step={step} />
-            </div>
+              step={step}
+              className={SPANS[index] ?? ""}
+              featured={false}
+            />
           ))}
+        </div>
         </div>
       </div>
     </section>
   );
 }
 
-function SignalCard({ step }: { step: Step }) {
+function BentoCard({
+  step,
+  className,
+  featured,
+}: {
+  step: Step;
+  className: string;
+  featured: boolean;
+}) {
   const Icon = step.icon;
-  const stepIndex = steps.findIndex((s) => s.id === step.id);
+  const total = steps.length;
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden border border-white/10 bg-white/[0.03] p-8">
+    <div
+      className={`relative flex min-h-[260px] flex-col justify-between overflow-hidden border-b border-r p-6 sm:p-7 lg:p-8 ${
+        featured
+          ? "border-white/15 bg-black text-white"
+          : "border-black/10 bg-white text-black"
+      } ${className}`}
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: featured
+            ? "radial-gradient(circle, rgba(255,255,255,0.08) 1px, transparent 1px)"
+            : "radial-gradient(circle, rgba(0,0,0,0.045) 1px, transparent 1px)",
+          backgroundSize: "16px 16px",
+        }}
+      />
+
       <div className="relative flex items-center justify-between">
-        <div className="flex h-11 w-11 items-center justify-center border border-white/10 bg-white/5">
-          <Icon className="h-5 w-5 text-white" />
+        <div
+          className={`flex h-11 w-11 items-center justify-center border ${
+            featured ? "border-white/15 bg-white/[0.06]" : "border-black/10 bg-black/[0.03]"
+          }`}
+        >
+          <Icon className="h-5 w-5" strokeWidth={1.5} />
         </div>
-        <span className="font-mono text-xs tracking-[0.2em] text-white/40">
-          {String(step.id).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}
+
+        <span
+          className={`font-mono text-xs ${featured ? "text-white/40" : "text-black/40"}`}
+        >
+          {String(step.id).padStart(2, "0")} / {String(total).padStart(2, "0")}
         </span>
       </div>
 
-      <div className="relative mt-8">
-        <div className="mb-3 inline-flex items-center gap-2 border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
+      <div className="relative mt-10">
+        <div
+          className={`mb-3 inline-flex items-center gap-2 border px-3 py-1 text-xs ${
+            featured
+              ? "border-white/15 bg-white/[0.06] text-white/70"
+              : "border-black/10 bg-black/[0.03] text-black/60"
+          }`}
+        >
           <Sparkles className="h-3 w-3" />
           {step.panelTitle}
         </div>
-        <h3 className="text-2xl font-medium tracking-tight">{step.title}</h3>
-        <p className="mt-4 leading-relaxed text-white/60">
+
+        <h3 className="text-xl font-medium tracking-tight sm:text-2xl">
+          {step.title}
+        </h3>
+
+        <p
+          className={`mt-3 max-w-[44ch] text-sm leading-relaxed sm:text-base ${
+            featured ? "text-white/60" : "text-black/60"
+          }`}
+        >
           {step.panelDescription}
         </p>
       </div>
 
-      <div className="relative mt-8 flex flex-wrap gap-2">
-        {step.tags.map((tag) => (
-          <span
-            key={tag}
-            className="border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className="relative mt-auto pt-10">
-        <div className="border-t border-white/10 pt-6">
-          <div className="flex items-center">
-            {steps.map((s, i) => {
-              const isDone = i < stepIndex;
-              const isCurrent = i === stepIndex;
-              return (
-                <div key={s.id} className="flex flex-1 items-center last:flex-none">
-                  <div
-                    className={`h-2 w-2 shrink-0 transition-colors ${
-                      isDone || isCurrent ? "bg-white" : "bg-white/15"
-                    }`}
-                  />
-                  {i < steps.length - 1 && (
-                    <div
-                      className={`mx-1.5 h-px flex-1 transition-colors ${
-                        isDone ? "bg-white/50" : "bg-white/10"
-                      }`}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-white/40">
-            Stage {step.id} of {steps.length}
-          </p>
+      <div className="relative mt-8">
+        <div className="flex flex-wrap gap-2">
+          {step.tags.map((tag) => (
+            <span
+              key={tag}
+              className={`border px-3 py-1 text-xs ${
+                featured
+                  ? "border-white/15 bg-white/[0.06] text-white/70"
+                  : "border-black/10 bg-black/[0.03] text-black/70"
+              }`}
+            >
+              {tag}
+            </span>
+          ))}
         </div>
       </div>
     </div>
